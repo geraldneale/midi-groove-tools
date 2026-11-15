@@ -1,24 +1,24 @@
-# midi-tools
+# MIDI Groove Tools
 
 Small command-line utilities for watching and routing MIDI on macOS and Linux. Built while syncing an MPC Live III, a CME H12MIDI Pro, Roland AIRA Compact gear and Logic Pro.
 
 ## Install
 
 ```
-curl -fsSL https://raw.githubusercontent.com/OWNER/midi-tools/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/OWNER/midi-groove-tools/main/install.sh | sh
 ```
 
 Or from a clone:
 
 ```
-git clone https://github.com/OWNER/midi-tools.git
-cd midi-tools
+git clone https://github.com/OWNER/midi-groove-tools.git
+cd midi-groove-tools
 ./install.sh
 ```
 
 Run the same command again to update. `./install.sh --uninstall` removes everything.
 
-Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-tools`. Requires Python 3.9+, and on Linux the ALSA library (`alsa-lib` on Arch, `libasound2` on Debian/Ubuntu).
+Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-groove-tools`. Requires Python 3.9+, and on Linux the ALSA library (`alsa-lib` on Arch, `libasound2` on Debian/Ubuntu).
 
 ## Commands
 
