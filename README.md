@@ -5,13 +5,13 @@ Small command-line utilities for watching and routing MIDI on macOS and Linux. B
 ## Install
 
 ```
-curl -fsSL https://raw.githubusercontent.com/OWNER/midi-groove-tools/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/geraldneale/midi-groove-tools/main/install.sh | sh
 ```
 
 Or from a clone:
 
 ```
-git clone https://github.com/OWNER/midi-groove-tools.git
+git clone https://github.com/geraldneale/midi-groove-tools.git
 cd midi-groove-tools
 ./install.sh
 ```

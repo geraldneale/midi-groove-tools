@@ -2,7 +2,7 @@
 # install.sh: install MIDI Groove Tools commands on macOS or Linux.
 #
 #   From a clone:   ./install.sh
-#   One line:       curl -fsSL https://raw.githubusercontent.com/OWNER/midi-groove-tools/main/install.sh | sh
+#   One line:       curl -fsSL https://raw.githubusercontent.com/geraldneale/midi-groove-tools/main/install.sh | sh
 #   Update:         run either again
 #   Uninstall:      ./install.sh --uninstall
 #
@@ -12,7 +12,7 @@
 
 set -eu
 
-REPO_URL="${MIDI_TOOLS_REPO:-https://github.com/OWNER/midi-groove-tools.git}"
+REPO_URL="${MIDI_TOOLS_REPO:-https://github.com/geraldneale/midi-groove-tools.git}"
 DATA_DIR="${MIDI_TOOLS_HOME:-$HOME/.local/share/midi-groove-tools}"
 BIN_DIR="${MIDI_TOOLS_BIN:-$HOME/.local/bin}"
 VENV="$DATA_DIR/venv"
