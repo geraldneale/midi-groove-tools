@@ -18,7 +18,7 @@ BIN_DIR="${MIDI_TOOLS_BIN:-$HOME/.local/bin}"
 VENV="$DATA_DIR/venv"
 
 # command name : python module
-TOOLS="midi-watch:watch midi-watch-all:watch_all midi-forward:forward"
+TOOLS="midi-watch:watch midi-watch-all:watch_all midi-forward:forward beatmap:beatmap midi-align:midi_align midi-clean:midi_clean midi-dump:midi_dump midi-monitor:midi_monitor midi-tools-test:test_midi_tools"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -47,8 +47,18 @@ case "$0" in
 esac
 if [ -n "$SCRIPT_DIR" ] && [ -d "$SCRIPT_DIR/python/midi_tools" ]; then
     SRC="$SCRIPT_DIR"
+elif ! command -v git >/dev/null 2>&1 || { [ "$OS" = "Darwin" ] && ! xcode-select -p >/dev/null 2>&1; }; then
+    # No git, or a Mac without the Command Line Tools (its /usr/bin/git is only a stub
+    # that pops up an installer): download the archive instead.
+    SRC="$DATA_DIR/src"
+    TARBALL="${MIDI_TOOLS_TARBALL:-https://github.com/geraldneale/midi-groove-tools/archive/refs/heads/main.tar.gz}"
+    say "Downloading $TARBALL (git not available)"
+    mkdir -p "$DATA_DIR"
+    rm -rf "$SRC" "$DATA_DIR/src.new"
+    mkdir -p "$DATA_DIR/src.new"
+    curl -fsSL "$TARBALL" | tar xz -C "$DATA_DIR/src.new" --strip-components 1
+    mv "$DATA_DIR/src.new" "$SRC"
 else
-    command -v git >/dev/null 2>&1 || die "git is required"
     SRC="$DATA_DIR/src"
     if [ -d "$SRC/.git" ]; then
         say "Updating $SRC"

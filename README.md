@@ -16,9 +16,9 @@ cd midi-groove-tools
 ./install.sh
 ```
 
-Run the same command again to update. `./install.sh --uninstall` removes everything.
+Run the same command again to update. No git needed: on a Mac without the developer tools (or any machine without git) the installer downloads the archive instead. `./install.sh --uninstall` removes everything.
 
-Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-groove-tools`. Requires Python 3.9+, and on Linux the ALSA library (`alsa-lib` on Arch, `libasound2` on Debian/Ubuntu).
+Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-groove-tools`. Requires Python 3.9+ (the song tools also use numpy; `beatmap --stretch` needs `rubberband`), and on Linux the ALSA library (`alsa-lib` on Arch, `libasound2` on Debian/Ubuntu).
 
 ## Commands
 
@@ -27,6 +27,13 @@ Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-gro
 | `midi-watch [PORT] [--raw-clock]` | Print incoming MIDI with timestamps. Clock is summarized once per beat with BPM and jitter. No argument lists input ports. |
 | `midi-watch-all [FILTER]` | Listen on every input port at once; shows which port receives what, with counts on Ctrl+C. |
 | `midi-forward [SRC] [DST] [--sync-only]` | Pass MIDI from one port to another, e.g. a drum machine's clock to a synth through the laptop. No arguments lists ports. |
+
+| `beatmap SONG.wav --bpm N` | Find the beats in a song: steady or drifting, and for a steady song the Logic tempo and region position. `--stretch` writes a steady version (needs `rubberband`). |
+| `midi-align MIDI WAV --start "BAR BEAT DIV TICK"` | Move audio-to-MIDI notes onto their attacks in the stem; add notes the conversion missed. |
+| `midi-clean MIDI [--no-offset --fix-late-lows --fix-outliers 0.25]` | Clean converted MIDI, keep the human feel, report bars to check. |
+| `midi-dump MIDI [--bars 41-44] [--grid]` | Show a .mid file bar by bar, or as a 1 e + a grid. |
+| `midi-monitor [--grid] [--hex]` | Live colored MIDI monitor; `--grid` prints each bar on a 1 e + a grid. |
+| `midi-tools-test` | Check the song tools still do the right thing. |
 
 Port names match by substring, case-insensitive: `midi-watch "Port 1"` listens on the first input whose name contains "Port 1".
 
