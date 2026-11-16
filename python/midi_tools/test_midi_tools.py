@@ -105,6 +105,130 @@ def beat_test(check):
             print('  skip rubberband not installed, stretch not tested')
 
 
+def minus_test(check):
+    """song_minus_stems.py on a fake split that lost a snare roll in bars 5 and 6."""
+    rng = np.random.default_rng(7)
+    sr, bpm = 44100, 110
+    bar = 240 / bpm
+    n = int(12 * bar * sr)
+    t = np.arange(n) / sr
+    bass = 0.3 * np.sin(2 * np.pi * 55 * t)
+    drums = np.zeros(n)
+    hit = rng.normal(size=int(0.08 * sr)) * np.exp(-np.arange(int(0.08 * sr)) / sr * 60)
+    for k in range(48):                                   # a hit on every beat
+        i = int(k * bar / 4 * sr); drums[i:i + len(hit)] += 0.4 * hit
+    roll = np.zeros(n)
+    for k in range(32):                                   # 16th note roll, bars 5 and 6
+        i = int((4 * bar + k * bar / 16) * sr); roll[i:i + len(hit)] += 0.3 * hit
+    mix = bass + drums + roll
+    def save(path, x, shift=0):
+        x = np.roll(x, shift)
+        with wave.open(path, 'wb') as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+            w.writeframes((np.clip(x, -1, 1) * 32767).astype('<i2').tobytes())
+    with tempfile.TemporaryDirectory() as d:
+        save(os.path.join(d, 'mix.wav'), mix / 1.5)
+        save(os.path.join(d, 'drums.wav'), drums / 1.5, int(0.012 * sr))    # stems come out 12 ms late
+        save(os.path.join(d, 'bass.wav'), bass / 1.5, int(0.012 * sr))
+        out = run(d, os.path.join(HERE, 'song_minus_stems.py'), 'mix.wav', 'drums.wav', 'bass.wav',
+                  '--bpm', str(bpm), '--top', '2')
+        print('song_minus_stems on a fake split that lost a snare roll')
+        check('-12.0 ms' in out or '-12.' in out.split('shifted')[1][:8], 'found the 12 ms offset')
+        top = [l for l in out.splitlines() if l.strip().startswith('bar')]
+        bars = sorted(int(l.split()[1]) for l in top)
+        check(bars == [5, 6], f'lost roll found in bars 5 and 6 (listed {bars})')
+        r, _ = (lambda w: (np.frombuffer(w.readframes(w.getnframes()), np.uint8), 0))(wave.open(os.path.join(d, 'mix_minus_stems.wav'), 'rb'))
+        check(len(r) > 0, 'residual WAV written')
+
+
+def hits_test(check):
+    """hits_to_midi.py on a fake drum stem: a human snare roll over a kick on every beat."""
+    from midi_clean import read_midi
+    rng = np.random.default_rng(11)
+    sr, bpm, first = 44100, 109.45, 0.401
+    beat = 60 / bpm
+    n = int((first + 10 * 4 * beat) * sr)
+    x = np.zeros(n)
+    tt = np.arange(int(0.25 * sr)) / sr
+    kick = np.sin(2 * np.pi * (50 + 60 * np.exp(-tt * 40)) * tt) * np.exp(-tt * 12)
+    snare = (rng.normal(size=len(tt)) * 0.6 + np.sin(2 * np.pi * 200 * tt)) * np.exp(-tt * 30)
+    def add(t, s, g):
+        i = int(t * sr); x[i:i + len(s)] += g * s[:n - i]
+    for k in range(40):
+        add(first + k * beat, kick, 0.8)
+    truth, gains = [], []
+    for k in range(32):                                   # bars 5 and 6: 16ths, crescendo, human timing
+        t = first + 4 * 4 * beat + k * beat / 4 + rng.normal(0, 0.006)
+        g = 0.15 + 0.6 * k / 31
+        add(t, snare, g); truth.append(t); gains.append(g)
+    for t in (first + 4 * 4 * beat + 3 * beat / 4 + beat / 8, first + 5 * 4 * beat + 9 * beat / 4 + beat / 8):
+        add(t, snare, 0.3); truth.append(t); gains.append(0.3)    # two trill notes between 16ths
+    truth = np.sort(truth)
+    x /= np.abs(x).max() * 1.1
+    with tempfile.TemporaryDirectory() as d:
+        with wave.open(os.path.join(d, 'drums.wav'), 'wb') as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+            w.writeframes((x * 32767).astype('<i2').tobytes())
+        run(d, os.path.join(HERE, 'hits_to_midi.py'), 'drums.wav', '--bpm', str(bpm),
+            '--first', str(first), '--bars', '4-7')
+        tpb, notes, metas, other = read_midi(os.path.join(d, 'drums_snare.mid'))
+        print('hits_to_midi on a fake snare roll over a kick')
+        check(len(notes) == len(truth), f'one note per snare hit, no kicks ({len(notes)} of {len(truth)})')
+        beat_ticks = tpb
+        got = np.array(sorted(first + (nn['start'] / beat_ticks - 8) * beat for nn in notes))
+        if len(got) == len(truth):
+            err = np.abs(got - truth) * 1000
+            check(np.median(err) < 2 and err.max() < 12, f'hit times kept, not quantized: median {np.median(err):.1f} ms, worst {err.max():.1f} ms off')
+            v = [nn['vel'] for nn in sorted(notes, key=lambda m: m['start'])]
+            check(v[-1] > v[0] + 30, f'crescendo kept in velocities ({v[0]} up to {v[-1]})')
+        check(min(nn['start'] for nn in notes) >= 8 * tpb + 4 * 4 * tpb - tpb // 8, 'first hit lands at bar 5 after the 2 bar lead-in (file bar 7)')
+
+
+def clock_test(check):
+    """clock_check.py on a fake MPC clock: 120 BPM, 0.3 ms jitter, a stop and restart,
+    then a change to 126 BPM, with one dropped tick and one doubled tick."""
+    from clock_check import analyze, write_csv
+    rng = np.random.default_rng(5)
+    sd = 0.0003
+    events, t = [(0.0, 'start')], 0.0
+    def ticks(bpm, count, drop=None, double=None):
+        nonlocal t
+        step = 60 / bpm / 24
+        for k in range(count):
+            t += step
+            if k == drop:
+                continue
+            events.append((t + rng.normal(0, sd), 'clock'))
+            if k == double:
+                events.append((t + rng.normal(0, sd) + 0.0004, 'clock'))
+    ticks(120, 24 * 32, drop=400)
+    t += 3.0                                              # stopped for 3 s: not jitter, not missing
+    events.append((t, 'stop')); events.append((t + 0.001, 'start'))
+    ticks(120, 24 * 8)
+    ticks(126, 24 * 32, double=300)
+    print('midi-clock-check on a fake 120 then 126 BPM clock with 0.3 ms jitter')
+    s = analyze(events)
+    want = 0.3 * np.sqrt(2)                               # interval jitter from 0.3 ms per tick
+    check(abs(s['sd'] - want) < 0.05, f"jitter sd found: {s['sd']:.3f} ms (made with {want:.3f})")
+    check(s['missing'] == 1 and s['doubled'] == 1, f"one tick dropped, one doubled (found {s['missing']} and {s['doubled']})")
+    check(abs(s['bpm_min'] - 120) < 0.3 and abs(s['bpm_max'] - 126) < 0.3,
+          f"tempo range {s['bpm_min']:.2f} to {s['bpm_max']:.2f} (made 120 and 126)")
+    check(s['worst'] < 2, f"the stop and the tempo change are not counted as jitter (worst {s['worst']:.3f} ms)")
+    with tempfile.TemporaryDirectory() as d:
+        write_csv(os.path.join(d, 'ticks.csv'), events)
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'clock_check.py'), '--replay', 'ticks.csv'],
+                           cwd=d, capture_output=True, text=True)
+        check('NOT STEADY' in r.stdout and r.returncode == 1, 'replay of the saved run: verdict NOT STEADY (a tick went missing)')
+        steady = [e for i, e in enumerate(events) if i < 300]
+        write_csv(os.path.join(d, 'steady.csv'), steady)
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'clock_check.py'), '--replay', 'steady.csv'],
+                           cwd=d, capture_output=True, text=True)
+        check('verdict      STEADY' in r.stdout and r.returncode == 0, 'clean stretch at 0.3 ms: verdict STEADY')
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'clock_check.py'), '--replay', 'steady.csv',
+                            '--threshold', '0.1'], cwd=d, capture_output=True, text=True)
+        check('sd above 0.1 ms' in r.stdout, '--threshold 0.1 makes the same run fail')
+
+
 def main():
     ok = True
     def check(cond, msg):
@@ -138,6 +262,9 @@ def main():
         dup = [k for k, v in cell.items() if len(v) > 1]
         check(not dup, f'no doubled notes (found {len(dup)})')
     beat_test(check)
+    minus_test(check)
+    hits_test(check)
+    clock_test(check)
     print('all good' if ok else 'SOMETHING BROKE')
     sys.exit(0 if ok else 1)
 

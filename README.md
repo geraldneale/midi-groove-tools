@@ -27,12 +27,14 @@ Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-gro
 | `midi-watch [PORT] [--raw-clock]` | Print incoming MIDI with timestamps. Clock is summarized once per beat with BPM and jitter. No argument lists input ports. |
 | `midi-watch-all [FILTER]` | Listen on every input port at once; shows which port receives what, with counts on Ctrl+C. |
 | `midi-forward [SRC] [DST] [--sync-only]` | Pass MIDI from one port to another, e.g. a drum machine's clock to a synth through the laptop. No arguments lists ports. |
-
 | `beatmap SONG.wav --bpm N` | Find the beats in a song: steady or drifting, and for a steady song the Logic tempo and region position. `--stretch` writes a steady version (needs `rubberband`). |
 | `midi-align MIDI WAV --start "BAR BEAT DIV TICK"` | Move audio-to-MIDI notes onto their attacks in the stem; add notes the conversion missed. |
 | `midi-clean MIDI [--no-offset --fix-late-lows --fix-outliers 0.25]` | Clean converted MIDI, keep the human feel, report bars to check. |
 | `midi-dump MIDI [--bars 41-44] [--grid]` | Show a .mid file bar by bar, or as a 1 e + a grid. |
 | `midi-monitor [--grid] [--hex]` | Live colored MIDI monitor; `--grid` prints each bar on a 1 e + a grid. |
+| `midi-clock-check [PORT] [--seconds 60] [--csv FILE]` | Measure how steady a MIDI clock is: tempo, tick jitter (sd, 95th percentile, worst), missing and doubled ticks, and a verdict (`--threshold`, default 1 ms). `--replay FILE` re-analyzes a saved run. |
+| `song-minus-stems MIX.wav STEMS.wav... [--bpm N --first S]` | Subtract the stems from the original mix to hear what the splitter dropped; lists the bars where the most went missing. `--solo STEM` writes the mix minus every other stem. |
+| `hits-to-midi DRUMS.wav --bpm N [--first S --bars 15-22 --band snare]` | Turn drum hits in one band (kick, snare, hat or LOW-HIGH Hz) into MIDI notes with their human timing and velocity, unquantized. |
 | `midi-tools-test` | Check the song tools still do the right thing. |
 
 Port names match by substring, case-insensitive: `midi-watch "Port 1"` listens on the first input whose name contains "Port 1".
