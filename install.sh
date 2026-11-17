@@ -18,7 +18,7 @@ BIN_DIR="${MIDI_TOOLS_BIN:-$HOME/.local/bin}"
 VENV="$DATA_DIR/venv"
 
 # command name : python module
-TOOLS="midi-watch:watch midi-watch-all:watch_all midi-forward:forward beatmap:beatmap midi-align:midi_align midi-clean:midi_clean midi-dump:midi_dump midi-monitor:midi_monitor song-minus-stems:song_minus_stems hits-to-midi:hits_to_midi midi-clock-check:clock_check midi-tools-test:test_midi_tools"
+TOOLS="midi-watch:watch midi-watch-all:watch_all midi-forward:forward beatmap:beatmap midi-align:midi_align midi-clean:midi_clean midi-dump:midi_dump midi-monitor:midi_monitor song-minus-stems:song_minus_stems hits-to-midi:hits_to_midi midi-clock-check:clock_check stem-check:stem_check midi-tools-test:test_midi_tools"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }

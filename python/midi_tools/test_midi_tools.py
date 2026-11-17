@@ -229,6 +229,37 @@ def clock_test(check):
         check('sd above 0.1 ms' in r.stdout, '--threshold 0.1 makes the same run fail')
 
 
+def stem_test(check):
+    """stem_check.py on fake Logic stems: 24-bit extensible headers with a bext chunk,
+    then one stem a few frames long and one at the wrong sample rate."""
+    import struct
+    def save(path, frames, sr=44100, bits=24, extensible=True, odd_chunk=True):
+        ch, block = 2, 2 * bits // 8
+        if extensible:
+            fmt = struct.pack('<HHIIHHHHI', 0xFFFE, ch, sr, sr * block, block, bits, 22, bits, 3) + \
+                  struct.pack('<H', 1) + bytes(14)
+        else:
+            fmt = struct.pack('<HHIIHH', 1, ch, sr, sr * block, block, bits)
+        extra = b'bext' + struct.pack('<I', 5) + b'abcde' + b'\0' if odd_chunk else b''
+        data = bytes(frames * block)
+        body = b'WAVE' + extra + b'fmt ' + struct.pack('<I', len(fmt)) + fmt + b'data' + struct.pack('<I', len(data)) + data
+        with open(path, 'wb') as f:
+            f.write(b'RIFF' + struct.pack('<I', len(body)) + body)
+    print('stem-check on fake Logic stems')
+    with tempfile.TemporaryDirectory() as d:
+        for name in ('Bass', 'Drums', 'Pads'):
+            save(os.path.join(d, name + '.wav'), 88200)
+        save(os.path.join(d, 'Vox.wav'), 88200, extensible=False, odd_chunk=False)
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'stem_check.py'), d], capture_output=True, text=True)
+        check(r.returncode == 0 and 'MATCH  (4 files, 44100 Hz, 24 bit int, 0:02.000)' in r.stdout,
+              'four matching stems, extensible and plain headers: verdict MATCH')
+        save(os.path.join(d, 'Pads.wav'), 88209)
+        save(os.path.join(d, 'Vox.wav'), 96000, sr=48000)
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'stem_check.py'), d], capture_output=True, text=True)
+        check(r.returncode == 1 and 'Pads.wav: 9 frames longer' in r.stdout, 'a stem 9 frames long is caught')
+        check('Vox.wav: 48000 Hz, the others are 44100 Hz' in r.stdout, 'a 48 kHz stem among 44.1 kHz ones is caught')
+
+
 def main():
     ok = True
     def check(cond, msg):
@@ -265,6 +296,7 @@ def main():
     minus_test(check)
     hits_test(check)
     clock_test(check)
+    stem_test(check)
     print('all good' if ok else 'SOMETHING BROKE')
     sys.exit(0 if ok else 1)
 

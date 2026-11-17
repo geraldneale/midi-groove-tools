@@ -35,6 +35,7 @@ Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-gro
 | `midi-clock-check [PORT] [--seconds 60] [--csv FILE]` | Measure how steady a MIDI clock is: tempo, tick jitter (sd, 95th percentile, worst), missing and doubled ticks, and a verdict (`--threshold`, default 1 ms). `--replay FILE` re-analyzes a saved run. |
 | `song-minus-stems MIX.wav STEMS.wav... [--bpm N --first S]` | Subtract the stems from the original mix to hear what the splitter dropped; lists the bars where the most went missing. `--solo STEM` writes the mix minus every other stem. |
 | `hits-to-midi DRUMS.wav --bpm N [--first S --bars 15-22 --band snare]` | Turn drum hits in one band (kick, snare, hat or LOW-HIGH Hz) into MIDI notes with their human timing and velocity, unquantized. |
+| `stem-check FOLDER` | Check every WAV in a folder (or the files given) has the same length to the sample, sample rate and bit depth, so the stems start and end together on the MPC. Exit code 1 on any mismatch. |
 | `midi-tools-test` | Check the song tools still do the right thing. |
 
 Port names match by substring, case-insensitive: `midi-watch "Port 1"` listens on the first input whose name contains "Port 1".
