@@ -1,6 +1,10 @@
 # MIDI Groove Tools
 
-Small command-line utilities for watching and routing MIDI on macOS and Linux. Built while syncing an MPC Live III, a CME H12MIDI Pro, Roland AIRA Compact gear and Logic Pro.
+Tools for a band that plays with a machine and still wants to sound human.
+
+Real bands drift. Old records drift. A drum machine doesn't. These command-line tools sit in between: they find the beats in a song that speeds up and slows down, stretch it onto a steady grid without touching the feel inside each beat, turn stems and drum hits into MIDI that keeps its human timing, show what a stem splitter threw away, and measure how steady your MIDI clock really is, down to the fraction of a millisecond.
+
+Built while getting a live rig of an MPC Live III, a CME H12MIDI Pro, Roland AIRA Compact gear and Logic Pro to lock together. Runs on macOS and Linux.
 
 ## Install
 
