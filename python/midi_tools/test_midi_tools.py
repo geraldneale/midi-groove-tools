@@ -292,6 +292,29 @@ def stem_test(check):
         check('Vox.wav: 48000 Hz, the others are 44100 Hz' in r.stdout, 'a 48 kHz stem among 44.1 kHz ones is caught')
 
 
+def pad_test(check):
+    """stem_pad.py on stems Logic trimmed to different lengths (117 bars at 92 wanted)."""
+    import struct
+    def save(path, frames):
+        fmt = struct.pack('<HHIIHHHHI', 0xFFFE, 2, 44100, 44100 * 6, 6, 24, 22, 24, 3) + struct.pack('<H', 1) + bytes(14)
+        data = b'\x01' * (frames * 6)
+        body = b'WAVE' + b'fmt ' + struct.pack('<I', len(fmt)) + fmt + b'data' + struct.pack('<I', len(data)) + data + b'LGWV' + struct.pack('<I', 3) + b'abc\0'
+        with open(path, 'wb') as f:
+            f.write(b'RIFF' + struct.pack('<I', len(body)) + body)
+    print('stem-pad on stems trimmed to different lengths')
+    with tempfile.TemporaryDirectory() as d:
+        save(os.path.join(d, 'Bass.wav'), 12845056)
+        save(os.path.join(d, 'Guitar.wav'), 12058624)
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'stem_pad.py'), d, '--bars', '117', '--bpm', '92'], capture_output=True, text=True)
+        check(r.returncode == 0, 'padded without errors')
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'stem_check.py'), d], capture_output=True, text=True)
+        check('MATCH  (2 files, 44100 Hz, 24 bit int, 5:05.217)' in r.stdout, 'both now exactly 117 bars (13460087 frames): verdict MATCH')
+        raw = open(os.path.join(d, 'Guitar.wav'), 'rb').read()
+        check(raw.endswith(b'LGWV\x03\x00\x00\x00abc\x00'), 'chunks after the audio kept')
+        i = raw.index(b'data') + 8
+        check(raw[i + 12058624 * 6 - 1] == 1 and raw[i + 12058624 * 6] == 0, 'original audio kept, silence added after it')
+
+
 def main():
     ok = True
     def check(cond, msg):
@@ -330,6 +353,7 @@ def main():
     hits_test(check)
     clock_test(check)
     stem_test(check)
+    pad_test(check)
     print('all good' if ok else 'SOMETHING BROKE')
     sys.exit(0 if ok else 1)
 
