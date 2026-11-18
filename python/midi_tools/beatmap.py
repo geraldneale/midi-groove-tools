@@ -70,17 +70,23 @@ def onset_envelope(x, sr, low=False):
     return env / (env.std() + 1e-9), HOP * step / sr
 
 
-def track_beats(env, dt, bpm, tight=100.0):
+def track_beats(env, dt, bpm, tight=100.0, period=None, hold=0.0):
     """Best chain of beats: each beat sits on strong onsets, and each gap stays near
-    the beat length (dynamic programming, after Ellis 2007). Tempo may drift slowly."""
+    the beat length (dynamic programming, after Ellis 2007). With `period` (frames per beat
+    at each frame) the expected gap follows the song's own tempo curve instead of --bpm.
+    `hold` adds a cost for every bit a gap differs from the expected one, so sliding half a
+    beat costs the same however slowly it's done (the squared `tight` cost alone lets the
+    chain creep onto the off-beats a little per beat through a break with no kick)."""
     P = 60 / bpm / dt
-    lo, hi = int(P * 0.8), int(P * 1.25) + 1
+    if period is None:
+        period = np.full(len(env), P)
+    lo, hi = int(period.min() * 0.8), int(period.max() * 1.25) + 1
     taus = np.arange(lo, hi)
-    pen = -tight * np.log(taus / P) ** 2
     score = env.astype(np.float64).copy()
     back = np.full(len(env), -1)
     for t in range(lo, len(env)):
-        prev = score[t - taus] + pen
+        lg = np.log(taus / period[t])
+        prev = score[t - taus] - tight * lg ** 2 - hold * np.abs(lg)
         k = np.argmax(prev)
         if prev[k] > 0:
             score[t] += prev[k]; back[t] = t - taus[k]
@@ -99,10 +105,18 @@ def track_beats(env, dt, bpm, tight=100.0):
         if 0 < b < len(env) - 1:
             a, c, d = env[b - 1], env[b], env[b + 1]
             den = a - 2 * c + d
-            out.append(b + (0.5 * (a - d) / den if den < 0 else 0))
+            out.append(b + (np.clip(0.5 * (a - d) / den, -0.5, 0.5) if den < 0 else 0))   # a flat peak can't move it more than half a frame
         else:
             out.append(b)
     return np.array(out) * dt
+
+
+def tempo_curve(beats, n, dt, half=8):
+    """Frames per beat at every frame, from the median gap of the nearby beats."""
+    g = np.diff(beats)
+    loc = np.array([np.median(g[max(0, i - half):i + half + 1]) for i in range(len(g))])
+    mid = (beats[:-1] + beats[1:]) / 2
+    return np.interp(np.arange(n) * dt, mid, loc) / dt
 
 
 def refine(x, sr, beats):
@@ -126,7 +140,12 @@ def find_beats(x, sr, bpm, low=False, first=None):
     # can pull a full-band tracker half a beat off, so the low band counts double
     lo, dt = onset_envelope(x, sr, True)
     env = lo if low else 2 * lo + onset_envelope(x, sr, False)[0]
-    rough = track_beats(env, dt, bpm)
+    # pass 1, loose: follows drift, but where a section has no kick it can slide onto the
+    # off-beats for a few bars (Lebanese Blonde's break did, for 8 bars)
+    loose = track_beats(env, dt, bpm, 100.0)
+    # pass 2, held to the song's own tempo curve from pass 1: sliding half a beat now costs
+    # more than a break's off-beats can pay back, while the drift is already in the expected gap
+    rough = track_beats(env, dt, bpm, 100.0, tempo_curve(loose, len(env), dt), hold=300.0)
     fine = refine(x, sr, rough)
     # the onset frames sit a fixed amount early; where no clear attack is near the beat
     # (no kick on it), keep the rough position plus that fixed amount instead
@@ -135,6 +154,17 @@ def find_beats(x, sr, bpm, low=False, first=None):
     if first is not None:                          # drop anything before the given first beat
         beats = beats[beats >= first - 0.05]
     return beats
+
+
+def beat_numbers(beats, half=8):
+    """Count beats: how many beat lengths each gap spans, using the local median gap.
+    A missed beat makes a gap of 2; an extra beat squeezed in makes a gap of 0 and is dropped."""
+    d = np.diff(beats)
+    k = [0]
+    for i, g in enumerate(d):
+        p = np.median(d[max(0, i - half):i + half + 1])
+        k.append(k[-1] + max(0, int(round(g / p))))
+    return np.array(k)
 
 
 def bar_report(beats, per_bar=4, cols=8):
@@ -170,18 +200,21 @@ def main():
     a = ap.parse_args()
 
     raw, ch, width, sr, n, x = read_wav(a.wav)
-    beats = find_beats(x, sr, a.bpm, a.low, a.first)
-    if len(beats) < 8:
+    found = find_beats(x, sr, a.bpm, a.low, a.first)
+    if len(found) < 8:
         sys.exit('found too few beats; check --bpm')
+    beats = found
+    k = beat_numbers(beats)                        # a missed beat counts as 2, so the grid can't slip
     T = 60 / a.bpm
-    print(f'{a.wav}: {n / sr:.1f} s, {len(beats)} beats, first beat at {beats[0]:.3f} s')
+    print(f'{a.wav}: {n / sr:.1f} s, {k[-1] + 1} beats, first beat at {beats[0]:.3f} s')
+    full = np.interp(np.arange(k[-1] + 1), k, beats)     # every beat, misread ones filled in from their neighbours
 
     if a.check:
-        grid = beats[0] + np.round((beats - beats[0]) / T) * T
-        dev = (beats - grid) * 1000
+        off = np.median(beats - k * T)
+        dev = (beats - (off + k * T)) * 1000
         print(f'Distance from a steady {a.bpm:g} BPM grid: median {np.median(np.abs(dev)):.1f} ms, '
               f'95% within {np.percentile(np.abs(dev), 95):.1f} ms, worst {np.abs(dev).max():.1f} ms')
-        bad = [(i // 4 + 1, d) for i, d in enumerate(dev) if abs(d) > 20]
+        bad = [(kk // 4 + 1, d) for kk, d in zip(k, dev) if abs(d) > 20]
         if bad:
             print('Beats more than 20 ms off (bar counted from the first beat): '
                   + ', '.join(f'bar {b} {d:+.0f} ms' for b, d in bad[:12]) + (' ...' if len(bad) > 12 else ''))
@@ -191,17 +224,15 @@ def main():
             print('Every beat is within 20 ms of the grid.')
         return
 
-    bpms, lines = bar_report(beats)
+    bpms, lines = bar_report(full)
     print(f'Tempo bar by bar (counted from the first beat): {min(bpms):.1f} to {max(bpms):.1f}, '
           f'median {statistics.median(bpms):.1f}')
     print('\n'.join(lines))
     if not a.stretch:
         q = max(1, len(bpms) // 4)
         early, late = statistics.median(bpms[:q]), statistics.median(bpms[-q:])
-        # straight-line fit through every beat: steadier than using just the first and last
-        T0 = (beats[-1] - beats[0]) / (len(beats) - 1)
-        idx = np.round((beats - beats[0]) / T0)
-        slope, first = np.polyfit(idx, beats, 1)
+        # straight-line fit through every good beat: steadier than using just the first and last
+        slope, first = np.polyfit(k, beats, 1)
         avg = 60 / slope
         if abs(early - late) / avg > 0.01:
             print(f'DRIFTS: about {early:.1f} at the start, {late:.1f} at the end. '
@@ -227,8 +258,9 @@ def main():
     n2 = len(raw2) // fsz
     src = beats + shift / sr                       # beats in the prepared file; first = lead
 
-    # 2. time map: every beat goes to its place on the steady grid
-    tgt = lead + np.arange(len(src)) * T
+    # 2. time map: every good beat goes to its place on the steady grid (misread ones are skipped,
+    #    so the audio between their neighbours is stretched evenly)
+    tgt = lead + k * T
     pairs = [(0, 0)] + [(int(round(s * sr)), int(round(t * sr))) for s, t in zip(src, tgt)]
     tail = (n2 / sr - src[-1]) * T / np.median(np.diff(src[-9:]))   # after the last beat: its local tempo
     end_t = int(round((tgt[-1] + tail) * sr))
@@ -250,7 +282,7 @@ def main():
             sys.exit('rubberband failed:\n' + r.stderr)
     print(f'Wrote {out}')
     print(f'Logic: tempo {a.bpm:g}, region position 1 1 1 1 (first beat on bar {a.lead_bars + 1})')
-    print(f'Check it: python3 beatmap.py "{out}" --bpm {a.bpm:g} --check')
+    print(f'Check it: beatmap "{out}" --bpm {a.bpm:g} --check')
 
 
 if __name__ == '__main__':

@@ -91,8 +91,9 @@ def beat_test(check):
         check(logic_position(60 / 125 * 8, 125, 2) == '1 1 1 1', 'two bars of silence already in the file -> 1 1 1 1')
         print('beatmap on a fake song drifting from 112.3 to 108.7 BPM')
         b = find_beats(read_wav(path)[5], sr, 111)
-        check(abs(len(b) - nb) <= 2, f'found the beats ({len(b)} of {nb}), none in the silence')
         err = np.array([np.abs(truth - v).min() for v in b]) * 1000
+        check(nb - 4 <= len(b) <= nb and err.max() < 120,
+              f'found the beats ({len(b)} of {nb}; a few with no kick may be left out), none in the silence')
         check(np.median(err) < 5, f'beats where the kicks are: median {np.median(err):.1f} ms off')
         if shutil.which('rubberband'):
             run(d, os.path.join(HERE, 'beatmap.py'), 'song.wav', '--bpm', '111', '--stretch')
@@ -103,6 +104,37 @@ def beat_test(check):
             check(abs(b2[0] - 8 * 60 / 111) < 0.01, 'first beat lands on bar 3')
         else:
             print('  skip rubberband not installed, stretch not tested')
+
+
+def break_test(check):
+    """beatmap on a steady 92 BPM song with an 8 bar break: no kick, loud off-beat hats over soft on-beat ones.
+    The tracker must not slide onto the off-beats there (Lebanese Blonde did)."""
+    from beatmap import find_beats, beat_numbers
+    rng = np.random.default_rng(5)
+    sr, bpm, nbars = 44100, 92.0, 40
+    T = 60 / bpm
+    truth = 0.5 + np.arange(nbars * 4) * T
+    x = np.zeros(int((truth[-1] + 2) * sr))
+    tt = np.arange(int(0.3 * sr)) / sr
+    kick = np.sin(2 * np.pi * (50 + 80 * np.exp(-tt * 30)) * tt) * np.exp(-tt * 9)
+    hat = rng.normal(size=len(tt)) * np.exp(-tt * 90)
+    def add(t, s, g):
+        i = int(t * sr); x[i:i + len(s)] += g * s[:len(x) - i]
+    for i, b in enumerate(truth):
+        brk = 16 * 4 <= i < 24 * 4
+        if not brk:
+            add(b + rng.normal(0, 0.004), kick, 0.9)
+        else:
+            add(b, hat, 0.12)                                # the break: a soft hat on the beat,
+        add(b + T / 2, hat, 0.6 if brk else 0.15)          # loud hats on the off-beats
+    x += 0.005 * rng.normal(size=len(x))
+    b = find_beats(x / np.abs(x).max() / 1.1, sr, bpm)
+    k = beat_numbers(b)
+    slope, first = np.polyfit(k, b, 1)
+    print('beatmap on a steady 92 song with an 8 bar break of off-beat hats')
+    near = np.array([np.abs(truth - v).min() for v in b])
+    check((near < 0.05).all(), f'no beats slid onto the off-beats in the break (worst {near.max() * 1000:.0f} ms from a real beat)')
+    check(abs(60 / slope - bpm) < 0.02, f'tempo fit stays {60 / slope:.2f} (92.00 wanted)')
 
 
 def minus_test(check):
@@ -293,6 +325,7 @@ def main():
         dup = [k for k, v in cell.items() if len(v) > 1]
         check(not dup, f'no doubled notes (found {len(dup)})')
     beat_test(check)
+    break_test(check)
     minus_test(check)
     hits_test(check)
     clock_test(check)
