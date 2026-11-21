@@ -315,6 +315,24 @@ def pad_test(check):
         check(raw[i + 12058624 * 6 - 1] == 1 and raw[i + 12058624 * 6] == 0, 'original audio kept, silence added after it')
 
 
+def mpc_mid_test(check):
+    """mpc_mid.py on a Logic-style file: format 0, 480 PPQN, running status, notes off the grid."""
+    import struct
+    name = b'BASS SYNTH'
+    trk = b'\x00\xff\x03' + bytes([len(name)]) + name
+    trk += bytes.fromhex('00ff5103075300' '00b06e00' '8170ff59020100' '82e60e901a7f' '8155801a00' '1b90267f' '7780' '2600' '0e90267f' '6680' '2600' '00ff2f00')
+    print('mpc-mid on a Logic-style .mid')
+    with tempfile.TemporaryDirectory() as d:
+        src, dst = os.path.join(d, 'in.mid'), os.path.join(d, 'out.mid')
+        with open(src, 'wb') as f:
+            f.write(b'MThd' + struct.pack('>IHHH', 6, 0, 1, 480) + b'MTrk' + struct.pack('>I', len(trk)) + trk)
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'mpc_mid.py'), src, dst], capture_output=True, text=True)
+        check(r.returncode == 0 and 'MATCH: all 3 notes identical' in r.stdout, 'all notes identical after conversion: verdict MATCH')
+        raw = open(dst, 'rb').read()
+        check(struct.unpack('>HHH', raw[8:14]) == (1, 1, 960), 'header is format 1, 1 track, 960 PPQN like the MPC writes')
+        check('first note at bar 24.9990' in r.stdout, 'first note keeps its 2 ticks early (no quantizing)')
+
+
 def main():
     ok = True
     def check(cond, msg):
@@ -354,6 +372,7 @@ def main():
     clock_test(check)
     stem_test(check)
     pad_test(check)
+    mpc_mid_test(check)
     print('all good' if ok else 'SOMETHING BROKE')
     sys.exit(0 if ok else 1)
 
