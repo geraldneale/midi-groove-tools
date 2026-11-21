@@ -315,21 +315,21 @@ def pad_test(check):
         check(raw[i + 12058624 * 6 - 1] == 1 and raw[i + 12058624 * 6] == 0, 'original audio kept, silence added after it')
 
 
-def mpc_mid_test(check):
-    """mpc_mid.py on a Logic-style file: format 0, 480 PPQN, running status, notes off the grid."""
-    import struct
-    name = b'BASS SYNTH'
-    trk = b'\x00\xff\x03' + bytes([len(name)]) + name
+def mpc_pattern_test(check):
+    """mpc_pattern.py on a Logic-style file: format 0, 480 per beat, running status, notes off the grid."""
+    import json, struct
+    trk = b'\x00\xff\x03\x0aBASS SYNTH'
     trk += bytes.fromhex('00ff5103075300' '00b06e00' '8170ff59020100' '82e60e901a7f' '8155801a00' '1b90267f' '7780' '2600' '0e90267f' '6680' '2600' '00ff2f00')
-    print('mpc-mid on a Logic-style .mid')
+    print('mpc-pattern on a Logic-style .mid')
     with tempfile.TemporaryDirectory() as d:
-        src, dst = os.path.join(d, 'in.mid'), os.path.join(d, 'out.mid')
+        src = os.path.join(d, 'bass.mid')
         with open(src, 'wb') as f:
             f.write(b'MThd' + struct.pack('>IHHH', 6, 0, 1, 480) + b'MTrk' + struct.pack('>I', len(trk)) + trk)
-        r = subprocess.run([sys.executable, os.path.join(HERE, 'mpc_mid.py'), src, dst], capture_output=True, text=True)
-        check(r.returncode == 0 and 'MATCH: all 3 notes identical' in r.stdout, 'all notes identical after conversion: verdict MATCH')
-        raw = open(dst, 'rb').read()
-        check(struct.unpack('>HHH', raw[8:14]) == (1, 1, 960), 'header is format 1, 1 track, 960 PPQN like the MPC writes')
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'mpc_pattern.py'), src], capture_output=True, text=True)
+        check(r.returncode == 0 and 'MATCH: all 3 notes identical' in r.stdout, 'all notes identical in the pattern: verdict MATCH')
+        ev = [e for e in json.load(open(os.path.join(d, 'bass.mpcpattern')))['pattern']['events'] if e['type'] == 2]
+        check([(e['time'], e['len'], e['1']) for e in ev] == [(92156, 426, 26), (92636, 238, 38), (92902, 204, 38)],
+              'times doubled exactly to 960 per beat, counted from the start of the file')
         check('first note at bar 24.9990' in r.stdout, 'first note keeps its 2 ticks early (no quantizing)')
 
 
@@ -372,7 +372,7 @@ def main():
     clock_test(check)
     stem_test(check)
     pad_test(check)
-    mpc_mid_test(check)
+    mpc_pattern_test(check)
     print('all good' if ok else 'SOMETHING BROKE')
     sys.exit(0 if ok else 1)
 

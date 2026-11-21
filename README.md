@@ -41,7 +41,7 @@ Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-gro
 | `hits-to-midi DRUMS.wav --bpm N [--first S --bars 15-22 --band snare]` | Turn drum hits in one band (kick, snare, hat or LOW-HIGH Hz) into MIDI notes with their human timing and velocity, unquantized. |
 | `stem-check FOLDER` | Check every WAV in a folder (or the files given) has the same length to the sample, sample rate and bit depth, so the stems start and end together on the MPC. Exit code 1 on any mismatch. |
 | `stem-pad FOLDER --bars N --bpm N` | Pad every WAV in a folder with silence at the end so all are exactly N bars from bar 1. For Logic exports that stop each track where its sound stops. |
-| `mpc-mid IN.mid OUT.mid` | Rewrite a Logic .mid in the layout the MPC writes for its own patterns (format 1, 960 PPQN). Timing is multiplied exactly, never rounded; every note is checked after. |
+| `mpc-pattern MIDI [OUT]` | Make an MPC pattern (.mpcpattern) from a .mid so it loads onto the track you choose (the MPC loads a .mid only as a whole new sequence). Timing exact from the start of the file, never rounded; every note checked after. Keep the .mid as the master. |
 | `midi-tools-test` | Check the song tools still do the right thing. |
 
 Port names match by substring, case-insensitive: `midi-watch "Port 1"` listens on the first input whose name contains "Port 1".
