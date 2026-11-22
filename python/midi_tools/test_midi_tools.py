@@ -463,6 +463,42 @@ def anchor_test(check):
     check(err.max() < 15, f'first 32 beats on the band, not the claps or off-beats: worst {err.max():.0f} ms off')
 
 
+def midi_play_test(check):
+    """midi_play.py timing: start at a bar, a tempo change, running status, channel rewrite."""
+    import struct
+    from midi_play import schedule
+    def vlq(v):
+        out = [v & 0x7F]
+        v >>= 7
+        while v:
+            out.append((v & 0x7F) | 0x80); v >>= 7
+        return bytes(reversed(out))
+    bar, beat = 1920, 480                       # 480 per beat, 4/4
+    ev = [(0, bytes.fromhex('ff580404021808')), (0, bytes.fromhex('ff5103075300')),          # 125 BPM
+          (bar, bytes.fromhex('90267f')), (bar + 120, bytes.fromhex('2600')),                  # bar 2: note, then
+          (2 * bar, bytes.fromhex('ff510309' + '27c0')),                                     # off by running status
+          (2 * bar + beat, bytes.fromhex('90287f')), (2 * bar + beat + 120, bytes.fromhex('802800'))]  # 100 BPM from bar 3
+    body, last = b'', 0
+    for tk, raw in ev:
+        body += vlq(tk - last) + raw; last = tk
+    body += b'\x00\xff\x2f\x00'
+    print('midi-play timing')
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, 'part.mid')
+        with open(path, 'wb') as f:
+            f.write(b'MThd' + struct.pack('>IHHH', 6, 0, 1, 480) + b'MTrk' + struct.pack('>I', len(body)) + body)
+        out, bpm, meter = schedule(path, 2, 3)
+        ons = [(s, b) for s, b in out if b[0] & 0xF0 == 0x90 and b[2] > 0]
+        offs = [b for s, b in out if b[0] & 0xF0 == 0x80 or (b[0] & 0xF0 == 0x90 and b[2] == 0)]
+        check(abs(ons[0][0]) < 1e-9 and abs(bpm - 125) < 1e-6 and meter == (4, 4), '--from 2: the bar 2 note plays at once, 125 BPM, 4/4')
+        check(abs(ons[1][0] - (4 * 0.48 + 0.6)) < 1e-6, f'bar 3 beat 2, after the tempo change: {ons[1][0]:.3f} s (2.520 wanted)')
+        check(all(b[0] & 0x0F == 2 for s, b in out), '--channel 3 sends everything on channel 3')
+        check(len(offs) == len(ons) == 2, 'every note gets its note-off (running status read right)')
+        out3, bpm3, _ = schedule(path, 3)
+        first3 = [s for s, b in out3 if b[0] & 0xF0 == 0x90 and b[2] > 0][0]
+        check(abs(bpm3 - 100) < 1e-6 and abs(first3 - 0.6) < 1e-6, '--from 3: starts after the tempo change, first note one beat in at 100 BPM')
+
+
 def main():
     ok = True
     def check(cond, msg):
@@ -506,6 +542,7 @@ def main():
     mpc_pattern_test(check)
     play_along_test(check)
     play_along_follow_test(check)
+    midi_play_test(check)
     print('all good' if ok else 'SOMETHING BROKE')
     sys.exit(0 if ok else 1)
 
