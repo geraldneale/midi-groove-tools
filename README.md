@@ -42,6 +42,7 @@ Commands go in `~/.local/bin`; everything else lives in `~/.local/share/midi-gro
 | `stem-check FOLDER` | Check every WAV in a folder (or the files given) has the same length to the sample, sample rate and bit depth, so the stems start and end together on the MPC. Exit code 1 on any mismatch. |
 | `stem-pad FOLDER --bars N --bpm N` | Pad every WAV in a folder with silence at the end so all are exactly N bars from bar 1. For Logic exports that stop each track where its sound stops. |
 | `mpc-pattern MIDI [OUT]` | Make an MPC pattern (.mpcpattern) from a .mid so it loads onto the track you choose (the MPC loads a .mid only as a whole new sequence). Timing exact from the start of the file, never rounded; every note checked after. Keep the .mid as the master. |
+| `play-along STEMS --bpm N --from 25 --to 32 [--minus Bass --count-in 1]` | Play a song's stems from any bar and loop a few bars until Ctrl+C, leaving out the part you want to play yourself. `--once` plays through once; `--out FILE` writes the mix instead. |
 | `midi-tools-test` | Check the song tools still do the right thing. |
 
 Port names match by substring, case-insensitive: `midi-watch "Port 1"` listens on the first input whose name contains "Port 1".

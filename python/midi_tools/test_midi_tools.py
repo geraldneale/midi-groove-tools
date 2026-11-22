@@ -333,6 +333,52 @@ def mpc_pattern_test(check):
         check('first note at bar 24.9990' in r.stdout, 'first note keeps its 2 ticks early (no quantizing)')
 
 
+def play_along_test(check):
+    """play_along.py on fake 120 BPM stems: right bars, part left out, count-in, past the end."""
+    import struct
+    sr, bar = 44100, 88200  # 120 BPM: one bar is 2 s
+    def save(path, frames, level, extensible=True):
+        v = int(level * 2 ** 23)
+        one = struct.pack('<i', v)[:3] * 2
+        if extensible:
+            fmt = struct.pack('<HHIIHHHHI', 0xFFFE, 2, sr, sr * 6, 6, 24, 22, 24, 3) + struct.pack('<H', 1) + bytes(14)
+        else:
+            fmt = struct.pack('<HHIIHH', 1, 2, sr, sr * 6, 6, 24)
+        data = one * frames
+        body = b'WAVE' + b'fmt ' + struct.pack('<I', len(fmt)) + fmt + b'data' + struct.pack('<I', len(data)) + data
+        with open(path, 'wb') as f:
+            f.write(b'RIFF' + struct.pack('<I', len(body)) + body)
+    def read16(path):
+        raw = open(path, 'rb').read()
+        i = raw.index(b'data') + 8
+        return np.frombuffer(raw[i:], '<i2').reshape(-1, 2)
+    import numpy as np
+    print('play-along on fake 120 BPM stems')
+    with tempfile.TemporaryDirectory() as top:
+        d = os.path.join(top, 'stems')
+        os.mkdir(d)
+        save(os.path.join(d, 'Song (Kick).wav'), 10 * bar, 0.1)
+        save(os.path.join(d, 'Song (Bass).wav'), 10 * bar, 0.2, extensible=False)
+        save(os.path.join(d, 'Song (Vocals).wav'), 8 * bar, 0.3)
+        out = os.path.join(top, 'loop.wav')
+        run = lambda *x: subprocess.run([sys.executable, os.path.join(HERE, 'play_along.py'), d, '--bpm', '120', '--out', out] + list(x),
+                                        capture_output=True, text=True)
+        r = run('--from', '3', '--to', '4', '--minus', 'bass')
+        x = read16(out)
+        check(r.returncode == 0 and len(x) == 2 * bar, f'bars 3-4 are exactly 2 bars ({len(x)} frames, {2 * bar} wanted)')
+        check(abs(int(x[100, 0]) - round(0.4 * 2 ** 15)) <= 2, 'bass left out: kick + vocals only')
+        check('left out: Song (Bass).wav' in r.stdout, 'says which stem was left out')
+        r = run('--from', '8', '--to', '9', '--count-in', '1')
+        x = read16(out)
+        check(len(x) == 3 * bar, 'one bar of count-in added before the bars')
+        check(abs(int(x[bar + 100, 0]) - round(0.6 * 2 ** 15)) <= 2 and abs(int(x[2 * bar + 100, 0]) - round(0.3 * 2 ** 15)) <= 2,
+              'vocals end at bar 8; bar 9 has kick and bass only')
+        r = run('--from', '7', '--minus', 'kick', '--minus', 'vocals')
+        check(len(read16(out)) == 4 * bar, 'no --to plays to the end of the song (bars 7-10)')
+        r = run('--minus', 'kick', '--minus', 'bass', '--minus', 'vocals')
+        check(r.returncode != 0 and 'nothing to play' in (r.stdout + r.stderr), 'leaving everything out is refused')
+
+
 def main():
     ok = True
     def check(cond, msg):
@@ -373,6 +419,7 @@ def main():
     stem_test(check)
     pad_test(check)
     mpc_pattern_test(check)
+    play_along_test(check)
     print('all good' if ok else 'SOMETHING BROKE')
     sys.exit(0 if ok else 1)
 
