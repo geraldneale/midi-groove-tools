@@ -120,6 +120,8 @@ def main():
 
     files = []
     for s in a.stems:
+        if not os.path.exists(s):
+            sys.exit(f'{s}: no such folder or file on this machine')
         if os.path.isdir(s):
             files += sorted(os.path.join(s, n) for n in os.listdir(s)
                             if n.lower().endswith('.wav') and not n.startswith('.'))

@@ -377,6 +377,8 @@ def play_along_test(check):
         check(len(read16(out)) == 4 * bar, 'no --to plays to the end of the song (bars 7-10)')
         r = run('--minus', 'kick', '--minus', 'bass', '--minus', 'vocals')
         check(r.returncode != 0 and 'nothing to play' in (r.stdout + r.stderr), 'leaving everything out is refused')
+        r = subprocess.run([sys.executable, os.path.join(HERE, 'play_along.py'), os.path.join(top, 'nope'), '--bpm', '120'], capture_output=True, text=True)
+        check(r.returncode != 0 and 'no such folder or file' in r.stderr and 'Traceback' not in r.stderr, 'a missing folder gets a plain message, not a crash')
 
 
 def main():
