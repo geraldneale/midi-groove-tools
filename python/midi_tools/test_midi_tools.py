@@ -381,6 +381,56 @@ def play_along_test(check):
         check(r.returncode != 0 and 'no such folder or file' in r.stderr and 'Traceback' not in r.stderr, 'a missing folder gets a plain message, not a crash')
 
 
+def play_along_follow_test(check):
+    """play_along.py --first on a fake live band: claps before the music, tempo drifting 110 to 104."""
+    import struct
+    rng = np.random.default_rng(5)
+    sr, nb = 44100, 96
+    bpm = np.linspace(110, 104, nb) + 0.8 * np.sin(np.arange(nb) / 5)
+    t0 = 9.3
+    truth = t0 + np.concatenate([[0], np.cumsum(60 / bpm[:-1])])
+    n = int((truth[-1] + 2) * sr)
+    tt = np.arange(int(0.3 * sr)) / sr
+    kick = np.sin(2 * np.pi * (50 + 80 * np.exp(-tt * 30)) * tt) * np.exp(-tt * 9)
+    clap = rng.normal(size=len(tt)) * np.exp(-tt * 60) * 0.6
+    drums, bass = np.zeros(n), np.zeros(n)
+    def add(x, t, s):
+        i = int(t * sr); x[i:i + len(s)] += s[:n - i]
+    for t in np.cumsum(rng.uniform(0.25, 0.6, 40)):     # the crowd clapping, off any grid
+        if t < t0 - 0.5: add(drums, t, clap)
+    for i, b in enumerate(truth):
+        add(drums, b, kick)
+        add(bass, b + 0.01, 0.3 * np.sin(2 * np.pi * 55 * tt) * np.exp(-tt * 5))
+    def save(path, x):
+        x = np.clip(x / 2, -1, 1)
+        data = (x * 32767).astype('<i2').repeat(2).tobytes()
+        fmt = struct.pack('<HHIIHH', 1, 2, sr, sr * 4, 4, 16)
+        body = b'WAVE' + b'fmt ' + struct.pack('<I', 16) + fmt + b'data' + struct.pack('<I', len(data)) + data
+        with open(path, 'wb') as f:
+            f.write(b'RIFF' + struct.pack('<I', len(body)) + body)
+    print('play-along --first on a fake live band drifting from 110 to 104')
+    with tempfile.TemporaryDirectory() as top:
+        d = os.path.join(top, 'stems')
+        os.mkdir(d)
+        save(os.path.join(d, 'Live (Drums).wav'), drums)
+        save(os.path.join(d, 'Live (Bass).wav'), bass)
+        out = os.path.join(top, 'loop.wav')
+        cmd = [sys.executable, os.path.join(HERE, 'play_along.py'), d, '--bpm', '107', '--first', f'{t0 + 0.004:.3f}',
+               '--from', '17', '--to', '23', '--minus', 'bass', '--out', out]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        raw = open(out, 'rb').read() if r.returncode == 0 else b''
+        got = (len(raw) - 44) // 4 / sr
+        want, steady = truth[92] - truth[64], 7 * 4 * 60 / 107
+        check(r.returncode == 0 and abs(got - want) < 0.02 and abs(steady - want) > 0.15,
+              f'bars 17-23 are the band\'s own 7 bars: {got:.3f} s ({want:.3f} s wanted; a steady 107 grid would give {steady:.3f})')
+        x = np.frombuffer(raw[44:], '<i2').reshape(-1, 2)[:, 0].astype(float) if raw else np.zeros(1)
+        onset = np.argmax(np.abs(x) > 0.05 * 32767) / sr
+        check(onset < 0.01, f'the loop starts on the downbeat of bar 17 ({onset * 1000:.1f} ms in)')
+        check(os.path.exists(os.path.join(d, '.play-along-beats.txt')), 'beats kept for the next run')
+        r2 = subprocess.run(cmd, capture_output=True, text=True)
+        check(r2.returncode == 0 and 'finding the band' not in r2.stdout, 'second run uses the kept beats')
+
+
 def main():
     ok = True
     def check(cond, msg):
@@ -422,6 +472,7 @@ def main():
     pad_test(check)
     mpc_pattern_test(check)
     play_along_test(check)
+    play_along_follow_test(check)
     print('all good' if ok else 'SOMETHING BROKE')
     sys.exit(0 if ok else 1)
 
