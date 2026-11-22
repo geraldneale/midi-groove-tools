@@ -13,6 +13,10 @@ Bars are counted from bar 1 at the start of the files (the standard for stems
 exported from Logic and padded with stem-pad). --to is the last bar played, so
 --from 25 --to 32 is 8 bars.
 
+BETA: following a live band (--first) is not reliable yet; on a live trio with a
+clapping crowd the loop can still turn around wrong. Steady songs (stems from Logic
+on a click) are fine.
+
 A live recording with no click drifts, so a steady --bpm grid slides off the band.
 Give --first, the time in seconds of the band's first downbeat (beatmap prints
 it), and play-along follows the band's own beats instead (found in the drums stem
@@ -164,7 +168,7 @@ def main():
     p.add_argument('--from', dest='first', type=int, default=1, help='first bar (default 1)')
     p.add_argument('--to', dest='last', type=int, help='last bar played; loops unless --once')
     p.add_argument('--first', dest='first_beat', type=float, metavar='SECONDS',
-                   help="the band's first downbeat; follow their beats instead of a steady grid")
+                   help="BETA: the band's first downbeat; follow their beats instead of a steady grid")
     p.add_argument('--minus', action='append', default=[], help='leave out files whose name contains this')
     p.add_argument('--count-in', type=int, default=0, metavar='BARS', help='bars of click before the first pass')
     p.add_argument('--once', action='store_true', help='play once instead of looping')
