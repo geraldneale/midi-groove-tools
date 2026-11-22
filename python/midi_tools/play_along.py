@@ -15,7 +15,8 @@ exported from Logic and padded with stem-pad). --to is the last bar played, so
 
 A live recording with no click drifts, so a steady --bpm grid slides off the band.
 Give --first, the time in seconds of the band's first downbeat (beatmap prints
-it), and play-along follows the band's own beats instead: bar 1 is that downbeat,
+it), and play-along follows the band's own beats instead (found in the drums stem
+when there is one): bar 1 is that downbeat,
 bars are cut on the real downbeats, and a loop wraps at the tempo they played.
 --bpm is then only a hint for the beat finder. The beats are found once and kept
 in a hidden file in the stems folder, so the next run starts at once.
@@ -109,17 +110,20 @@ def write_wav(path, x, rate):
 
 
 def band_beats(files, bpm, first, folder):
-    """Every beat of the band from --first on, found in the mix of all the stems
-    (the ones left out too), with missed beats filled in. Kept in a hidden file."""
+    """Every beat of the band from --first on, with missed beats filled in. Found in the
+    drums stem when there is one (piano comping and a clapping crowd in the full mix can
+    outweigh the drums), otherwise in the mix of all the stems. Kept in a hidden file."""
     from beatmap import find_beats, beat_numbers
-    key = f'{bpm:g} {first:g} ' + ' '.join(f'{os.path.basename(f)}:{os.path.getsize(f)}' for f in files)
+    drums = [f for f in files if any(w in os.path.basename(f).lower() for w in ('drum', 'kick'))]
+    files = drums or files
+    key = f'v2 {bpm:g} {first:g} ' + ' '.join(f'{os.path.basename(f)}:{os.path.getsize(f)}' for f in files)
     cache = os.path.join(folder, '.play-along-beats.txt') if folder else None
     if cache and os.path.exists(cache):
         with open(cache) as fh:
             lines = fh.read().splitlines()
         if lines and lines[0] == key:
             return np.array([float(v) for v in lines[1:]])
-    print('finding the band\'s beats (once; takes a little while)...')
+    print(f"finding the band's beats in {', '.join(os.path.basename(f) for f in files)} (once; takes a little while)...")
     mono, rate = None, None
     for f in files:
         ch, rate, _, _, _, total = wav_info(f)

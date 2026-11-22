@@ -140,6 +140,15 @@ def find_beats(x, sr, bpm, low=False, first=None):
     # can pull a full-band tracker half a beat off, so the low band counts double
     lo, dt = onset_envelope(x, sr, True)
     env = lo if low else 2 * lo + onset_envelope(x, sr, False)[0]
+    if first is not None:
+        # Anchor the count on the given downbeat. Dropping the beats before it is not enough:
+        # a crowd clapping in time before the band comes in (The In Crowd, live) set the chain's
+        # tempo and phase, and it carried on half a beat off for 25 beats. So ignore everything
+        # before it, and make the chain start exactly there.
+        k = int(round(first / dt))
+        env = env.copy()
+        env[:max(0, k - 1)] = 0
+        env[k] = env.max() * 50 + 1
     # pass 1, loose: follows drift, but where a section has no kick it can slide onto the
     # off-beats for a few bars (Lebanese Blonde's break did, for 8 bars)
     loose = track_beats(env, dt, bpm, 100.0)
@@ -153,6 +162,8 @@ def find_beats(x, sr, bpm, low=False, first=None):
     beats = np.where(np.abs(fine - (rough + lag)) <= 0.015, fine, rough + lag)
     if first is not None:                          # drop anything before the given first beat
         beats = beats[beats >= first - 0.05]
+        if len(beats) and abs(beats[0] - first) < 0.1:
+            beats[0] = first                       # it was given, so it is exact
     return beats
 
 

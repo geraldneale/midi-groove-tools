@@ -431,6 +431,38 @@ def play_along_follow_test(check):
         check(r2.returncode == 0 and 'finding the band' not in r2.stdout, 'second run uses the kept beats')
 
 
+def anchor_test(check):
+    """beatmap --first on a live band whose crowd claps in time, at another tempo, before the
+    band comes in, with piano comping on the off-beats (Ramsey Lewis, The In Crowd)."""
+    from beatmap import find_beats
+    rng = np.random.default_rng(7)
+    sr = 44100
+    bpm = np.concatenate([np.full(40, 109.5), np.linspace(109.5, 105, 80)])
+    t0 = 13.77
+    truth = t0 + np.concatenate([[0], np.cumsum(60 / bpm[:-1])])
+    x = np.zeros(int((truth[-1] + 2) * sr))
+    tt = np.arange(int(0.3 * sr)) / sr
+    kick = 0.5 * np.sin(2 * np.pi * (50 + 80 * np.exp(-tt * 30)) * tt) * np.exp(-tt * 9)
+    stab = sum(np.sin(2 * np.pi * f * tt) for f in (196, 247, 294, 392)) * np.exp(-tt * 14) * 0.5
+    clap = rng.normal(size=len(tt)) * np.exp(-tt * 60) * 0.8
+    def add(t, s):
+        i = int(t * sr); x[i:i + len(s)] += s[:len(x) - i]
+    claps = np.arange(0.3, t0, 0.6)                    # clapping in time at 100 BPM before the band
+    for t in claps + 0.02 * rng.normal(size=len(claps)):
+        if t < t0 - 0.3: add(t, clap)
+    for i, b in enumerate(truth):
+        add(b, kick)
+        if i < 32:
+            add(b + 30 / bpm[i], stab)
+            if i % 2: add(b + 30 / bpm[i], 0.6 * clap)
+    x += 0.005 * rng.normal(size=len(x))
+    print('beatmap --first after a crowd clapping in time at another tempo')
+    b = find_beats(x, sr, 106, False, t0)
+    err = np.array([np.abs(truth - v).min() for v in b[:32]]) * 1000
+    check(b[0] == t0, f'count starts exactly on the given downbeat ({b[0]:.3f} s)')
+    check(err.max() < 15, f'first 32 beats on the band, not the claps or off-beats: worst {err.max():.0f} ms off')
+
+
 def main():
     ok = True
     def check(cond, msg):
@@ -464,6 +496,7 @@ def main():
         dup = [k for k, v in cell.items() if len(v) > 1]
         check(not dup, f'no doubled notes (found {len(dup)})')
     beat_test(check)
+    anchor_test(check)
     break_test(check)
     minus_test(check)
     hits_test(check)
