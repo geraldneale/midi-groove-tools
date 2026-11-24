@@ -1,0 +1,83 @@
+# Groovelab26 visuals show file.
+# Paths are relative to this file. Run: python3 vis_render.py show.toml
+
+[midi]
+port = "MPC"            # part of the MIDI port name (python3 vis_render.py --list-ports); "FakeMPC" for rehearsal
+visual_channel = 16     # MPC track carrying scene notes, CCs and program changes
+drum_channel = 10       # drum track the kick/snare/hat reactions listen to
+kick_notes = [36]
+snare_notes = [38, 40]
+hat_notes = [42, 44, 46]
+
+[output]
+width = 1920            # fixed render size; rehearsal and gig look identical
+height = 1080
+preview_width = 1280    # rehearsal window size on the iMac
+fullscreen = false
+display = 0             # projector is usually 1
+fps = 60
+offset_ms = 0           # projector lag compensation, set at soundcheck (see README)
+pulse_source = "kick"   # "kick" = follow kick notes, "beat" = follow MIDI clock
+max_flash_hz = 3        # photosensitivity cap; 0 disables flashes entirely
+fallback = "art/fallback.png"   # shown before the first scene and if MIDI goes silent
+idle_seconds = 5
+crossfade = 0.25        # seconds between scenes
+
+# CC number on the visual channel for each effect
+[cc]
+zoom = 1        # how hard the kick punches the zoom
+hue = 2         # color rotation
+kaleido = 3     # 0 = off, up = more mirror segments
+feedback = 4    # trails / tunnel
+rgb_split = 5   # chromatic split
+flash = 6       # snare flash amount (rate limited)
+brightness = 7
+drift = 8       # slow pan on stills
+shimmer = 9     # hat driven split
+
+# values used until a CC arrives (0.0 to 1.0)
+[cc_defaults]
+zoom = 0.5
+brightness = 1.0
+drift = 0.5
+shimmer = 0.3
+
+# One [[song]] per MPC program change number. Items map a note on the
+# visual channel to an image or a video clip. Velocity sets intensity.
+[[song]]
+program = 0
+name = "Song 1"
+
+  [[song.item]]
+  note = 36
+  type = "image"
+  path = "art/piece01.png"
+
+  [[song.item]]
+  note = 37
+  type = "image"
+  path = "art/piece02.png"
+
+  [[song.item]]
+  note = 38
+  type = "clip"
+  path = "clips/example.mp4"
+  start = 0.0          # seconds into the file
+  end = 8.0            # loops start..end
+  bpm = 120            # clip's own tempo: playback speeds up or slows to the band
+
+  [[song.item]]
+  note = 39
+  type = "image"
+  path = "art/piece03.png"
+  hold = true          # goes to black when the note ends
+  gain = 0.8
+
+[[song]]
+program = 1
+name = "Song 2"
+
+  [[song.item]]
+  note = 36
+  type = "image"
+  path = "art/piece04.png"

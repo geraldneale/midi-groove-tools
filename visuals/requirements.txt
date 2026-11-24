@@ -1,0 +1,7 @@
+python-rtmidi
+moderngl
+pygame
+numpy
+pillow
+opencv-python
+tomli; python_version < "3.11"

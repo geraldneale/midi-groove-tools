@@ -62,6 +62,10 @@ Listening on: MPC Live III Port 1   (Ctrl+C to quit)
 
 Jitter is measured on the receiving computer, so it includes USB and OS timing: the source is at least that steady.
 
+## Visuals (separate, optional)
+
+`visuals/` holds a MIDI driven visuals app for the live show: the MPC's visual track picks art and video clips, CCs drive the effects, and the drum track makes them pulse. It needs graphics libraries, so `install.sh` does not install it. Set it up only on the machine that feeds the projector; see [visuals/README.md](visuals/README.md).
+
 ## Design
 
 The command names are the stable interface. Tools start in Python (`python/`) and may move to Rust (`rust/`). `install.sh` installs a Rust binary under the same name when one is built, so scripts and habits keep working.
