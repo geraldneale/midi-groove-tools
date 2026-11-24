@@ -187,7 +187,7 @@ DEFAULT_MIDI = {"port": "MPC", "visual_channel": 16, "drum_channel": 10,
 DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "fullscreen": False, "display": 0, "fps": 60, "offset_ms": 0,
                   "pulse_source": "kick", "max_flash_hz": 3.0, "fallback": "",
-                  "idle_seconds": 5.0, "crossfade": 0.25}
+                  "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain"}
 DEFAULT_CC = {"zoom": 1, "hue": 2, "kaleido": 3, "feedback": 4, "rgb_split": 5,
               "flash": 6, "brightness": 7, "drift": 8, "shimmer": 9}
 DEFAULT_CC_VALUES = {"zoom": 0.5, "hue": 0.0, "kaleido": 0.0, "feedback": 0.0,
@@ -205,6 +205,7 @@ class Item:
     bpm: float | None = None  # clip's own tempo, for tempo stretch
     hold: bool = False  # clear to black on note off
     gain: float = 1.0
+    fit: str = "contain"  # contain = whole piece, black around it; cover = fill frame, crop
 
 
 @dataclass
@@ -239,6 +240,9 @@ def load_show(path):
     output = {**DEFAULT_OUTPUT, **raw.get("output", {})}
     cc_map = {**DEFAULT_CC, **raw.get("cc", {})}
     cc_defaults = {**DEFAULT_CC_VALUES, **raw.get("cc_defaults", {})}
+    if output["fit"] not in ("contain", "cover"):
+        warnings.append(f"fit must be contain or cover, got {output['fit']!r}; using contain")
+        output["fit"] = "contain"
     if output["pulse_source"] not in ("kick", "beat"):
         warnings.append(f"pulse_source must be kick or beat, got {output['pulse_source']!r}; using kick")
         output["pulse_source"] = "kick"
@@ -263,11 +267,15 @@ def load_show(path):
             if not p.exists():
                 warnings.append(f"song {prog}: missing file {p}")
             note = int(it["note"])
+            fit = it.get("fit", output["fit"])
+            if fit not in ("contain", "cover"):
+                warnings.append(f"song {prog}: note {note} fit must be contain or cover; using {output['fit']}")
+                fit = output["fit"]
             if note in items:
                 warnings.append(f"song {prog}: note {note} used twice, last one wins")
             items[note] = Item(note, kind, p, float(it.get("start", 0.0)),
                                it.get("end"), it.get("bpm"),
-                               bool(it.get("hold", False)), float(it.get("gain", 1.0)))
+                               bool(it.get("hold", False)), float(it.get("gain", 1.0)), fit)
         if prog in songs:
             warnings.append(f"program {prog} defined twice, last one wins")
         songs[prog] = Song(prog, s.get("name", f"program {prog}"), items)

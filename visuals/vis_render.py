@@ -69,7 +69,8 @@ vec3 hue_rotate(vec3 c, float h) {
 vec3 layer(sampler2D t, vec2 fit, vec2 p, float split) {
     vec2 q = (p - 0.5) * fit + 0.5;
     vec2 o = vec2(split * fit.x, 0.0);
-    return vec3(texture(t, q + o).r, texture(t, q).g, texture(t, q - o).b);
+    vec2 inside = step(vec2(0.0), q) * step(q, vec2(1.0));  // black outside the piece
+    return vec3(texture(t, q + o).r, texture(t, q).g, texture(t, q - o).b) * inside.x * inside.y;
 }
 
 void main() {
@@ -105,8 +106,9 @@ def set_u(prog, name, value):
 
 
 class Layer:
-    def __init__(self, ctx, source, item=None, gain=1.0):
+    def __init__(self, ctx, source, item=None, gain=1.0, mode="cover"):
         self.src, self.item, self.gain = source, item, gain
+        self.mode = item.fit if item else mode
         f = source.frame
         h, w = f.shape[:2]
         self.size = (w, h)
@@ -116,8 +118,12 @@ class Layer:
         source.update(0.0)  # clear the initial changed flag
 
     def fit(self, out_aspect):
+        """Texture scale for the shader. cover fills the frame and crops; contain shows it all."""
         a = self.size[0] / self.size[1]
-        return (out_aspect / a, 1.0) if a > out_aspect else (1.0, a / out_aspect)
+        wider = a > out_aspect
+        if self.mode == "cover":
+            return (out_aspect / a, 1.0) if wider else (1.0, a / out_aspect)
+        return (1.0, a / out_aspect) if wider else (out_aspect / a, 1.0)
 
     def update(self, dt, rate=1.0):
         if self.src.update(dt, rate):
@@ -215,7 +221,7 @@ class Show:
         self.black = Layer(self.ctx, ArraySource.solid())
         self.fallback = self.black
         if o["fallback"] and o["fallback"].exists():
-            self.fallback = Layer(self.ctx, ImageSource(o["fallback"]))
+            self.fallback = Layer(self.ctx, ImageSource(o["fallback"]), mode=o["fit"])
         self.cur = self.prev = None
         self.xfade_t0 = 0.0
         self.image_cache = {}
@@ -324,7 +330,8 @@ class Show:
         set_u(p, "gain_cur", a.gain)
         set_u(p, "gain_prev", b.gain)
         set_u(p, "xfade", xf)
-        set_u(p, "zoom", (1.0 + 0.08 * drift) * (1.0 + pulse * self.cc("zoom") * 0.15))
+        base = 1.0 + 0.08 * drift if a.mode == "cover" else 1.0  # cover needs a margin so drift never shows an edge
+        set_u(p, "zoom", base * (1.0 + pulse * self.cc("zoom") * 0.15))
         set_u(p, "hue", self.cc("hue"))
         set_u(p, "kaleido", 0.0 if k < 0.05 else 2.0 + round(k * 10))
         set_u(p, "feedback", self.cc("feedback"))

@@ -124,6 +124,7 @@ name = "Lebanese Blonde"
   [[song.item]]
   note = 36
   path = "a.png"
+  fit = "cover"
   [[song.item]]
   note = 37
   type = "clip"
@@ -152,6 +153,8 @@ name = "Lebanese Blonde"
         self.assertIn("pulse_source", joined)
         self.assertIn("missing.mp4", joined)
         self.assertIn("gif", joined)
+        self.assertEqual(song.items[36].fit, "cover")
+        self.assertEqual(clip.fit, "contain")  # default
 
     def test_example_show_parses(self):
         show = load_show(Path(__file__).parent / "show.toml")
