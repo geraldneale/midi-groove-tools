@@ -49,7 +49,9 @@ Keys: 1 to 9 trigger items, Space fake kick, S fake snare, Esc quit.
     python3 vis_render.py --list-ports     # confirm the MPC port name
     ./run_show.sh                          # projector on display 1; DISPLAY_INDEX=0 ./run_show.sh to change
 
-Before the show, turn off the Xfce compositor (Settings, Window Manager Tweaks, Compositor).
+**On a Mac** (for example a 2016 MacBook Pro, Intel): install Python 3.9 or newer from python.org, then the same `pip install -r requirements.txt`. The 2016 has only USB-C/Thunderbolt 3 ports, so bring a USB-C to HDMI adapter for the projector and a USB-C cable or adapter for the MPC. Projector is usually display 1. If pip finds no prebuilt OpenCV for your macOS version, try `pip install "opencv-python<4.11"`.
+
+On Xubuntu, before the show, turn off the Xfce compositor (Settings, Window Manager Tweaks, Compositor).
 
 **Projector lag.** With `pulse_source = "beat"`, set `offset_ms` to a positive value (try 30 to 60) until the zoom punch lands on the kick you hear. With `pulse_source = "kick"` the app can only add delay. To get note driven scenes earlier, nudge the visual track earlier in the MPC.
 

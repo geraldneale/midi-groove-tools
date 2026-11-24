@@ -183,6 +183,8 @@ class Show:
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MINOR_VERSION, 3)
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_PROFILE_MASK, pygame.GL_CONTEXT_PROFILE_CORE)
+        if sys.platform == "darwin":  # macOS only opens a modern OpenGL context with this flag
+            pygame.display.gl_set_attribute(pygame.GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, True)
         flags = pygame.OPENGL | pygame.DOUBLEBUF
         if fullscreen:
             size = pygame.display.get_desktop_sizes()[display]
