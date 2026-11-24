@@ -4,7 +4,7 @@ Opens a virtual ALSA MIDI port called FakeMPC and plays a four on the floor
 groove: clock, kick on every beat, snare on 2 and 4, 8th note hats (drum
 channel), a new scene note every few bars and a slow hue sweep (visual channel).
 
-    python3 fake_mpc.py --bpm 124 --bars 4 --notes 36 37 38 39
+    python3 fake_mpc.py --bpm 124 --bars 4 --notes 36 37 40 41
     python3 vis_render.py show.toml     # with port = "FakeMPC" in [midi]
 """
 import argparse
@@ -19,7 +19,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bpm", type=float, default=124.0)
     ap.add_argument("--bars", type=int, default=4, help="bars per scene")
-    ap.add_argument("--notes", type=int, nargs="+", default=[36, 37, 38, 39])
+    ap.add_argument("--notes", type=int, nargs="+", default=[36, 37, 38, 39, 40, 41])
     ap.add_argument("--drum-ch", type=int, default=10)
     ap.add_argument("--visual-ch", type=int, default=16)
     a = ap.parse_args()

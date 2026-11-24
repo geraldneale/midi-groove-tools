@@ -1,4 +1,5 @@
 """Tests for the parts that don't need a GPU or MIDI hardware: python3 -m unittest test_vis"""
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,8 @@ import numpy as np
 from PIL import Image
 
 from vis_core import (CLOCK, CONTINUE, PPQN, SPP, START, STOP, MidiState,
-                      StrobeLimiter, beat_pulse, decay, load_show, Hit)
+                      StrobeLimiter, beat_pulse, decay, load_show, Hit,
+                      dive_zoom, julia_c, MANDELBROT_SPOTS)
 from vis_media import ArraySource, ClipSource, ImageSource, cv2
 
 
@@ -106,6 +108,58 @@ class TestEnvelopes(unittest.TestCase):
         self.assertFalse(StrobeLimiter(0).allow(5))
 
 
+class TestFractals(unittest.TestCase):
+    def test_dive_goes_in_and_back_out(self):
+        self.assertAlmostEqual(dive_zoom(0, 16, 1000), 1.0)
+        self.assertAlmostEqual(dive_zoom(64, 16, 1000), 1000.0)   # full depth after 16 bars
+        self.assertAlmostEqual(dive_zoom(128, 16, 1000), 1.0)     # back at the top after 32
+        self.assertAlmostEqual(dive_zoom(32, 16, 1000), dive_zoom(96, 16, 1000))  # mirror image
+        zs = [dive_zoom(b, 16, 1000) for b in range(0, 65, 4)]
+        self.assertEqual(zs, sorted(zs))                          # only ever deeper on the way in
+
+    def test_julia_walks_a_circle(self):
+        x, y = julia_c(0, 32, 0.7885, start=0.5)
+        self.assertAlmostEqual(x, -0.7885)
+        self.assertAlmostEqual(y, 0.0)
+        x2, y2 = julia_c(128, 32, 0.7885, start=0.5)              # one full trip later: same shape
+        self.assertAlmostEqual(x2, x)
+        self.assertAlmostEqual(y2, y, places=9)
+        self.assertAlmostEqual(math.hypot(*julia_c(37, 32, 0.7885)), 0.7885)
+
+    def test_fractal_items_load(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "s.toml").write_text("""
+[[song]]
+  [[song.item]]
+  note = 40
+  type = "mandelbrot"
+  spot = "spiral"
+  max_zoom = 1e9
+  [[song.item]]
+  note = 41
+  type = "julia"
+  palette = "neon"
+  iterations = 5
+  [[song.item]]
+  note = 42
+  type = "mandelbrot"
+  center = [0.25, 0.0]
+""")
+            show = load_show(Path(d) / "s.toml")
+        items = show.songs[0].items
+        m, j = items[40], items[41]
+        self.assertIsNone(m.path)
+        self.assertEqual(m.params["center"], MANDELBROT_SPOTS["spiral"])
+        self.assertEqual(m.params["max_zoom"], 50000.0)            # capped
+        self.assertEqual(m.fit, "cover")
+        self.assertEqual(j.params["palette"], "rainbow")           # unknown palette falls back
+        self.assertEqual(j.params["iterations"], 16)                # clamped
+        self.assertEqual(items[42].params["center"], (0.25, 0.0))
+        joined = " ".join(show.warnings)
+        self.assertIn("50000", joined)
+        self.assertIn("palette", joined)
+
+
 class TestShowFile(unittest.TestCase):
     def test_load(self):
         with tempfile.TemporaryDirectory() as d:
@@ -159,6 +213,9 @@ name = "Lebanese Blonde"
     def test_example_show_parses(self):
         show = load_show(Path(__file__).parent / "show.toml")
         self.assertEqual(set(show.songs), {0, 1})
+        self.assertEqual(show.songs[0].items[40].kind, "mandelbrot")
+        self.assertEqual(show.songs[0].items[41].kind, "julia")
+        self.assertEqual(show.warnings and [w for w in show.warnings if "note 4" in w], [])
         self.assertEqual(show.songs[0].items[38].kind, "clip")
 
 

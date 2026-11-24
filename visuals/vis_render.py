@@ -24,7 +24,8 @@ import numpy as np
 import pygame
 import rtmidi
 
-from vis_core import MidiState, StrobeLimiter, beat_pulse, decay, load_show
+from vis_core import (FRACTAL_KINDS, PALETTES, MidiState, StrobeLimiter, beat_pulse,
+                      decay, dive_zoom, julia_c, load_show)
 from vis_media import ArraySource, ClipSource, ImageSource
 
 VERT = """
@@ -89,6 +90,38 @@ void main() {
 }
 """
 
+FRAG_FRACTAL = """
+#version 330
+uniform int mode;          // 0 mandelbrot, 1 julia
+uniform vec2 center;
+uniform float scale;       // height of the view in the complex plane
+uniform float aspect;
+uniform vec2 jc;           // julia constant
+uniform int max_iter;
+uniform float color_phase, color_bands;
+uniform vec3 palette;
+in vec2 uv;
+out vec4 frag;
+void main() {
+    vec2 p = (uv - 0.5) * vec2(aspect, 1.0) * scale + center;
+    vec2 z = mode == 0 ? vec2(0.0) : p;
+    vec2 c = mode == 0 ? p : jc;
+    float n = 0.0;
+    float r2 = 0.0;
+    for (int i = 0; i < 2000; i++) {
+        if (i >= max_iter) break;
+        z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+        r2 = dot(z, z);
+        if (r2 > 256.0) break;
+        n += 1.0;
+    }
+    if (n >= float(max_iter)) { frag = vec4(0.0, 0.0, 0.0, 1.0); return; }  // inside the set
+    float smooth_n = n + 1.0 - log2(0.5 * log(r2));                          // no banding
+    vec3 col = 0.5 + 0.5 * cos(6.2831853 * (smooth_n * color_bands + color_phase + palette));
+    frag = vec4(col, 1.0);
+}
+"""
+
 BLIT = """
 #version 330
 uniform sampler2D tex;
@@ -134,6 +167,49 @@ class Layer:
     def release(self):
         self.tex.release()
         self.src.close()
+
+
+class FractalLayer(Layer):
+    """A Mandelbrot or Julia set drawn live into its own texture every frame.
+
+    Each trigger starts fresh: the Mandelbrot dive begins at the top, the Julia morph at its start.
+    Timing follows the band's tempo; the kick punch and hue knob apply on top as for art.
+    """
+
+    def __init__(self, app, item, gain=1.0):
+        self.app, self.item, self.gain, self.src = app, item, gain, None
+        self.mode = "cover"
+        s = item.params["resolution"]
+        self.size = (max(64, round(app.W * s)), max(36, round(app.H * s)))
+        self.tex = app.ctx.texture(self.size, 4)
+        self.tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self.tex.repeat_x = self.tex.repeat_y = False
+        self.fbo = app.ctx.framebuffer(color_attachments=[self.tex])
+        self.beats = 0.0
+
+    def update(self, dt, rate=1.0):
+        self.beats += dt * self.app.state.bpm / 60.0
+        p, prm = self.app.fractal_prog, self.item.params
+        if self.item.kind == "mandelbrot":
+            set_u(p, "mode", 0)
+            set_u(p, "center", tuple(prm["center"]))
+            set_u(p, "scale", 3.0 / dive_zoom(self.beats, float(prm["dive_bars"]), float(prm["max_zoom"])))
+        else:
+            set_u(p, "mode", 1)
+            set_u(p, "center", (0.0, 0.0))
+            set_u(p, "scale", 3.0 / max(0.05, float(prm["zoom"])))
+            set_u(p, "jc", julia_c(self.beats, float(prm["morph_bars"]), float(prm["radius"]), float(prm["start"])))
+        set_u(p, "aspect", self.size[0] / self.size[1])
+        set_u(p, "max_iter", int(prm["iterations"]))
+        set_u(p, "color_phase", self.beats / max(1e-6, float(prm["color_bars"]) * 4.0))
+        set_u(p, "color_bands", float(prm["color_bands"]))
+        set_u(p, "palette", PALETTES[prm["palette"]])
+        self.fbo.use()
+        self.app.fractal_vao.render(moderngl.TRIANGLE_STRIP)
+
+    def release(self):
+        self.fbo.release()
+        self.tex.release()
 
 
 class MidiConnection:
@@ -209,6 +285,8 @@ class Show:
         self.blit = self.ctx.program(vertex_shader=VERT, fragment_shader=BLIT)
         self.vao = self.ctx.vertex_array(self.prog, [(quad, "2f", "in_pos")])
         self.blit_vao = self.ctx.vertex_array(self.blit, [(quad, "2f", "in_pos")])
+        self.fractal_prog = self.ctx.program(vertex_shader=VERT, fragment_shader=FRAG_FRACTAL)
+        self.fractal_vao = self.ctx.vertex_array(self.fractal_prog, [(quad, "2f", "in_pos")])
         self.out_tex = [self.ctx.texture((self.W, self.H), 4) for _ in range(2)]
         for t in self.out_tex:
             t.filter = (moderngl.LINEAR, moderngl.LINEAR)
@@ -239,7 +317,7 @@ class Show:
         self.song = song
         self.image_cache = {}
         for item in song.items.values():  # preload stills so triggers don't hit the disk
-            if item.kind == "image" and item.path.exists():
+            if item.kind == "image" and item.path and item.path.exists():
                 try:
                     self.image_cache[item.note] = ImageSource(item.path).frame
                 except Exception as e:
@@ -254,15 +332,19 @@ class Show:
         return ClipSource(item.path, item.start, item.end)
 
     def trigger(self, item, vel, now):
+        gain = 1.0 if item is None else item.gain * (0.25 + 0.75 * vel)
         try:
-            src = ArraySource.solid() if item is None else self.make_source(item)
+            if item is not None and item.kind in FRACTAL_KINDS:
+                layer = FractalLayer(self, item, gain)
+            else:
+                src = ArraySource.solid() if item is None else self.make_source(item)
+                layer = Layer(self.ctx, src, item, gain)
         except Exception as e:
             print(f"trigger failed for note {item.note}: {e}", file=sys.stderr)
             return
-        gain = 1.0 if item is None else item.gain * (0.25 + 0.75 * vel)
         if self.prev is not None:
             self.prev.release()
-        self.prev, self.cur = self.cur, Layer(self.ctx, src, item, gain)
+        self.prev, self.cur = self.cur, layer
         self.xfade_t0 = now
 
     def handle(self, ev, now):

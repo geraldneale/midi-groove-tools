@@ -75,6 +75,24 @@ name = "Song 1"
   hold = true          # goes to black when the note ends
   gain = 0.8
 
+  # Fractals are drawn live, no file needed. Each trigger starts them fresh.
+  [[song.item]]
+  note = 40
+  type = "mandelbrot"
+  spot = "seahorse"    # or "spiral", or center = [x, y]
+  dive_bars = 16       # bars to dive in; then it floats back out over the same and repeats
+  max_zoom = 20000     # deepest zoom (up to 50000 before it breaks into blocks)
+  palette = "rainbow"  # rainbow, fire, ice or acid
+  color_bars = 4       # colors cycle once every this many bars
+
+  [[song.item]]
+  note = 41
+  type = "julia"
+  morph_bars = 32      # one full trip through its shapes
+  start = 0.5          # where the trip begins (0.5 = the solid blob)
+  palette = "ice"
+  # also: radius (0.7885), zoom (1.0), iterations, resolution (0.25 to 1, lower for older laptops)
+
 [[song]]
 program = 1
 name = "Song 2"

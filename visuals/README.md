@@ -27,6 +27,7 @@ Python 3.9 or newer. Not installed by the main `install.sh`.
 
 On the visual channel (default 16):
 * **Note on** selects the image or clip mapped to that note in the current song. Velocity sets its intensity.
+* **Fractals:** an item can be `type = "mandelbrot"` (a tempo locked dive that floats back out and repeats) or `type = "julia"` (a shape that morphs on a loop). They're drawn live, need no file, and start fresh on each trigger. Settings are in the example show.toml. Lower `resolution` if an older laptop stutters.
 * **Note off** clears to black only if the item has `hold = true`; otherwise the scene stays until the next note.
 * **CC 1 to 9** control the effects (zoom punch, hue, kaleidoscope, feedback, RGB split, snare flash, brightness, drift, hat shimmer). See `[cc]` in show.toml.
 * **Program change** switches song.

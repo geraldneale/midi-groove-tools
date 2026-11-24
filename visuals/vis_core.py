@@ -195,17 +195,55 @@ DEFAULT_CC_VALUES = {"zoom": 0.5, "hue": 0.0, "kaleido": 0.0, "feedback": 0.0,
                      "drift": 0.5, "shimmer": 0.3}
 
 
+# ---- fractals (drawn live on the GPU, no file) ----
+FRACTAL_KINDS = ("mandelbrot", "julia")
+MANDELBROT_SPOTS = {  # points on the edge of the set that stay detailed as you dive
+    "seahorse": (-0.743643887037151, 0.131825904205330),
+    "spiral": (-0.761574, -0.0847596),
+}
+PALETTES = {  # phase offsets for the cosine color palette (red, green, blue)
+    "rainbow": (0.0, 0.33, 0.67),
+    "fire": (0.0, 0.1, 0.2),
+    "ice": (0.5, 0.6, 0.7),
+    "acid": (0.8, 0.9, 0.3),
+}
+FRACTAL_DEFAULTS = {
+    "mandelbrot": {"spot": "seahorse", "dive_bars": 16, "max_zoom": 20000.0, "iterations": 300,
+                   "palette": "rainbow", "color_bars": 4, "color_bands": 0.02, "resolution": 0.75},
+    "julia": {"radius": 0.7885, "morph_bars": 32, "start": 0.5, "zoom": 1.0, "iterations": 200,
+              "palette": "rainbow", "color_bars": 4, "color_bands": 0.05, "resolution": 0.75},
+}
+
+
+def dive_zoom(beats, dive_bars, max_zoom):
+    """Zoom factor for the Mandelbrot dive: in over dive_bars, back out over dive_bars, repeat.
+    Eased at both ends, so it lingers at the top and at full depth."""
+    span = max(1e-6, dive_bars * 4.0)
+    phase = (beats / span) % 2.0
+    u = phase if phase < 1.0 else 2.0 - phase
+    u = u * u * (3.0 - 2.0 * u)  # smoothstep
+    return max_zoom ** u
+
+
+def julia_c(beats, morph_bars, radius, start=0.0):
+    """The Julia set's constant walks a circle once every morph_bars; the shape morphs as it goes.
+    start is where on the circle it begins, as a fraction of a turn (0.5 = the solid blob shape)."""
+    a = 2.0 * math.pi * (start + beats / max(1e-6, morph_bars * 4.0))
+    return (radius * math.cos(a), radius * math.sin(a))
+
+
 @dataclass
 class Item:
     note: int
-    kind: str  # "image" or "clip"
-    path: Path
+    kind: str  # "image", "clip", "mandelbrot" or "julia"
+    path: Path | None
     start: float = 0.0
     end: float | None = None
     bpm: float | None = None  # clip's own tempo, for tempo stretch
     hold: bool = False  # clear to black on note off
     gain: float = 1.0
     fit: str = "contain"  # contain = whole piece, black around it; cover = fill frame, crop
+    params: dict = field(default_factory=dict)  # fractal settings
 
 
 @dataclass
@@ -229,6 +267,31 @@ class Show:
 def _resolve(base, p):
     p = Path(p).expanduser()
     return p if p.is_absolute() else base / p
+
+
+def _fractal_params(kind, it, prog, note, warnings):
+    params = dict(FRACTAL_DEFAULTS[kind])
+    for k in params:
+        if k in it:
+            params[k] = it[k]
+    where = f"song {prog}: note {note}"
+    if params["palette"] not in PALETTES:
+        warnings.append(f"{where} palette must be one of {', '.join(PALETTES)}; using rainbow")
+        params["palette"] = "rainbow"
+    if kind == "mandelbrot":
+        if "center" in it:
+            params["center"] = tuple(float(v) for v in it["center"])
+        elif params["spot"] in MANDELBROT_SPOTS:
+            params["center"] = MANDELBROT_SPOTS[params["spot"]]
+        else:
+            warnings.append(f"{where} spot must be one of {', '.join(MANDELBROT_SPOTS)} (or give center = [x, y]); using seahorse")
+            params["center"] = MANDELBROT_SPOTS["seahorse"]
+        if float(params["max_zoom"]) > 50000:
+            warnings.append(f"{where} max_zoom above 50000 breaks into blocks on the GPU; capped at 50000")
+            params["max_zoom"] = 50000.0
+    params["resolution"] = min(1.0, max(0.25, float(params["resolution"])))
+    params["iterations"] = min(2000, max(16, int(params["iterations"])))
+    return params
 
 
 def load_show(path):
@@ -257,16 +320,23 @@ def load_show(path):
         items = {}
         for it in s.get("item", []):
             kind = it.get("type", "image")
-            if kind not in ("image", "clip"):
+            if kind not in ("image", "clip") + FRACTAL_KINDS:
                 warnings.append(f"song {prog}: unknown type {kind!r}, skipped")
                 continue
-            if "note" not in it or "path" not in it:
-                warnings.append(f"song {prog}: item needs note and path, skipped")
+            if "note" not in it:
+                warnings.append(f"song {prog}: item needs a note, skipped")
                 continue
-            p = _resolve(base, it["path"])
-            if not p.exists():
-                warnings.append(f"song {prog}: missing file {p}")
             note = int(it["note"])
+            p, params = None, {}
+            if kind in FRACTAL_KINDS:
+                params = _fractal_params(kind, it, prog, note, warnings)
+            elif "path" not in it:
+                warnings.append(f"song {prog}: note {note} needs a path, skipped")
+                continue
+            else:
+                p = _resolve(base, it["path"])
+                if not p.exists():
+                    warnings.append(f"song {prog}: missing file {p}")
             fit = it.get("fit", output["fit"])
             if fit not in ("contain", "cover"):
                 warnings.append(f"song {prog}: note {note} fit must be contain or cover; using {output['fit']}")
@@ -275,7 +345,8 @@ def load_show(path):
                 warnings.append(f"song {prog}: note {note} used twice, last one wins")
             items[note] = Item(note, kind, p, float(it.get("start", 0.0)),
                                it.get("end"), it.get("bpm"),
-                               bool(it.get("hold", False)), float(it.get("gain", 1.0)), fit)
+                               bool(it.get("hold", False)), float(it.get("gain", 1.0)),
+                               "cover" if kind in FRACTAL_KINDS else fit, params)
         if prog in songs:
             warnings.append(f"program {prog} defined twice, last one wins")
         songs[prog] = Song(prog, s.get("name", f"program {prog}"), items)
