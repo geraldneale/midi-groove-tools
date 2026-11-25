@@ -187,6 +187,14 @@ def one_in(rng, n):
     return n > 0 and rng.random() < 1.0 / n
 
 
+def roll_pulse(rng, big_chance, skip_chance):
+    """For each kick: "big" now and then, "skip" (no pulse at all) now and then, else "normal".
+    A big one is never also skipped."""
+    if one_in(rng, big_chance):
+        return "big"
+    return "skip" if one_in(rng, skip_chance) else "normal"
+
+
 def pick_twist(rng, chance, allowed=True):
     """For a new scene: (quarter_turns, mirrored), usually (0, False).
     allowed: True for any twist, "mirror" for a left to right mirror only (faces), False for none."""
@@ -220,7 +228,7 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "fullscreen": False, "display": 0, "fps": 60, "offset_ms": 0,
                   "pulse_source": "kick", "fallback": "",
                   "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain",
-                  "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0,
+                  "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0, "skip_pulse_chance": 10,
                   "twist_chance": 4, "generate": True}
 DEFAULT_CC = {"zoom": 1, "hue": 2, "kaleido": 3, "feedback": 4, "rgb_split": 5,
               "brightness": 7, "drift": 8, "shimmer": 9,

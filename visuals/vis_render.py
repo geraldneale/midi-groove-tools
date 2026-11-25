@@ -27,7 +27,7 @@ import rtmidi
 
 from vis_core import (FRACTAL_KINDS, GENERATED_KINDS, PALETTES, TEXT_KINDS, MidiState,
                       beat_pulse, decay, dive_zoom, generated_item, julia_c,
-                      layer_matrix, load_show, one_in, pick_twist)
+                      layer_matrix, load_show, one_in, pick_twist, roll_pulse)
 from vis_color import OKHSL_GLSL
 from vis_media import ArraySource, ClipPool, ClipSource, ImageSource
 from vis_text import TextScreen, make_feed
@@ -386,7 +386,7 @@ class Show:
         self.select_song(0)
         self.mirror_beats = 0.0
         self.rng = random.Random()
-        self.last_kick_t, self.last_beat, self.big = -1e9, None, False
+        self.last_kick_t, self.last_beat, self.kind_of_pulse = -1e9, None, "normal"
 
     # ---- song and scene control ----
     def select_song(self, program):
@@ -471,16 +471,21 @@ class Show:
 
         # every so often a beat lands a bigger punch with a longer release
         chance, size = int(o["big_pulse_chance"]), float(o["big_pulse_size"])
+        skip = int(o["skip_pulse_chance"])  # and now and then a kick gives no pulse at all
         if o["pulse_source"] == "beat":
             beats = self.state.beats(now, offset_s)
             if int(beats) != self.last_beat:
-                self.last_beat, self.big = int(beats), one_in(self.rng, chance)
-            pulse = beat_pulse(beats, 3.0 if self.big else 6.0) if self.state.running else 0.0
+                self.last_beat, self.kind_of_pulse = int(beats), roll_pulse(self.rng, chance, skip)
+            big = self.kind_of_pulse == "big"
+            pulse = beat_pulse(beats, 3.0 if big else 6.0) if self.state.running else 0.0
         else:  # kick driven: offset can only delay, so only negative values apply
             if kick.t != self.last_kick_t:
-                self.last_kick_t, self.big = kick.t, one_in(self.rng, chance)
-            pulse = decay(now + min(0.0, offset_s), kick, 0.25 if self.big else 0.12)
-        if self.big:
+                self.last_kick_t, self.kind_of_pulse = kick.t, roll_pulse(self.rng, chance, skip)
+            big = self.kind_of_pulse == "big"
+            pulse = decay(now + min(0.0, offset_s), kick, 0.25 if big else 0.12)
+        if self.kind_of_pulse == "skip":
+            pulse = 0.0
+        elif self.kind_of_pulse == "big":
             pulse *= size
 
 

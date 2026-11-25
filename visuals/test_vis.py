@@ -14,7 +14,7 @@ from PIL import Image
 from vis_core import (CLOCK, CONTINUE, PPQN, SPP, START, STOP, MidiState,
                       beat_pulse, decay, load_show, Hit,
                       dive_zoom, julia_c, MANDELBROT_SPOTS,
-                      layer_matrix, one_in, pick_twist, TWISTS)
+                      layer_matrix, one_in, pick_twist, TWISTS, roll_pulse)
 from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, cv2
 import vis_color as vc
 import clip_grab as cg
@@ -306,6 +306,16 @@ class TestSurprises(unittest.TestCase):
         hits = sum(one_in(rng, 32) for _ in range(32000))
         self.assertAlmostEqual(hits / 32000, 1 / 32, delta=0.004)
         self.assertFalse(any(one_in(rng, 0) for _ in range(100)))      # 0 = never
+
+    def test_roll_pulse(self):
+        import random
+        from collections import Counter
+        rng = random.Random(9)
+        c = Counter(roll_pulse(rng, 32, 10) for _ in range(40000))
+        self.assertAlmostEqual(c["big"] / 40000, 1 / 32, delta=0.004)
+        self.assertAlmostEqual(c["skip"] / 40000, (31 / 32) / 10, delta=0.006)   # big ones are never skipped
+        self.assertEqual(set(c), {"big", "skip", "normal"})
+        self.assertEqual({roll_pulse(rng, 0, 0) for _ in range(50)}, {"normal"})  # 0 turns both off
 
     def test_pick_twist(self):
         import random
