@@ -463,6 +463,16 @@ class TestTextScenes(unittest.TestCase):
         self.assertTrue(show.output["generate"])
 
 
+class TestFakeMPC(unittest.TestCase):
+    def test_scene_plan(self):
+        import fake_mpc
+        self.assertEqual(fake_mpc.scene_plan(["39", "40:32", "41:24", "44"], 16),
+                         [(39, 16), (40, 32), (41, 24), (44, 16)])
+        for bad in (["40:0"], ["200"], ["x"]):
+            with self.assertRaises(ValueError):
+                fake_mpc.scene_plan(bad, 16)
+
+
 class TestShowFile(unittest.TestCase):
     def test_load(self):
         with tempfile.TemporaryDirectory() as d:
