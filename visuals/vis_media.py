@@ -119,3 +119,52 @@ class ClipSource:
 
     def close(self):
         self.cap.release()
+
+
+class ClipPool:
+    """Opens video clips on a background thread ahead of time, so triggering one never
+    stalls the picture while the file opens and the first frame decodes.
+
+    prepare(key, factory) starts opening a clip; take(key, factory) hands over the ready one
+    (or opens it right away if it wasn't prepared) and starts preparing a fresh copy, so the
+    same note can be triggered again straight away.
+    """
+
+    def __init__(self, workers=2):
+        from concurrent.futures import ThreadPoolExecutor
+        self._ex = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="clip")
+        self._ready = {}
+        self._factories = {}
+
+    def prepare(self, key, factory):
+        self._discard(self._ready.pop(key, None))
+        self._factories[key] = factory
+        self._ready[key] = self._ex.submit(factory)
+
+    def take(self, key, factory=None):
+        factory = factory or self._factories.get(key)
+        fut = self._ready.pop(key, None)
+        src = fut.result() if fut is not None else factory()  # result() raises if opening failed
+        self.prepare(key, factory)
+        return src
+
+    def clear(self):
+        """Forget everything prepared (e.g. on a song change) and close the files."""
+        for fut in self._ready.values():
+            self._discard(fut)
+        self._ready.clear()
+        self._factories.clear()
+
+    @staticmethod
+    def _discard(fut):
+        if fut is None:
+            return
+
+        def close(f):
+            if not f.cancelled() and f.exception() is None:
+                f.result().close()
+        fut.add_done_callback(close)
+
+    def shutdown(self):
+        self.clear()
+        self._ex.shutdown(wait=False, cancel_futures=True)

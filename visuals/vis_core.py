@@ -181,18 +181,54 @@ class StrobeLimiter:
         return True
 
 
+# ---- surprises ----
+# (quarter turns, mirrored): mirror left to right, upside down mirror, upside down, turned either way
+TWISTS = ((0, True), (2, True), (2, False), (1, False), (3, False))
+
+
+def one_in(rng, n):
+    """True about once in every n calls (n <= 0: never)."""
+    return n > 0 and rng.random() < 1.0 / n
+
+
+def pick_twist(rng, chance):
+    """For a new scene: (quarter_turns, mirrored), usually (0, False)."""
+    return rng.choice(TWISTS) if one_in(rng, chance) else (0, False)
+
+
+def layer_matrix(img_aspect, out_aspect, mode="contain", turns=0, mirrored=False):
+    """2x2 matrix (column major, for the shader's mat2) taking a screen offset from the centre
+    (0..1 units both ways) to a texture offset, for the given fit and twist.
+    contain shows the whole (turned) piece; cover fills the frame and crops."""
+    odd = turns % 2 == 1
+    a = 1.0 / img_aspect if odd else img_aspect          # aspect of the piece as it appears
+    box_h = max(1.0, out_aspect / a) if mode == "cover" else min(1.0, out_aspect / a)
+    box_w = a * box_h                                     # on screen, in screen heights
+    img_w, img_h = (box_h, box_w) if odd else (box_w, box_h)
+    c = (1, 0, -1, 0)[turns % 4]
+    s = (0, 1, 0, -1)[turns % 4]
+    f = -1.0 if mirrored else 1.0
+    # texture = diag(1/img_w, 1/img_h) . mirror . rotate back . (screen x in heights)
+    m00, m01 = f * c * out_aspect / img_w, f * s / img_w
+    m10, m11 = -s * out_aspect / img_h, c / img_h
+    return (m00, m10, m01, m11)
+
+
 # ---- show config ----
 DEFAULT_MIDI = {"port": "MPC", "visual_channel": 16, "drum_channel": 10,
                 "kick_notes": [36], "snare_notes": [38, 40], "hat_notes": [42, 44, 46]}
 DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "fullscreen": False, "display": 0, "fps": 60, "offset_ms": 0,
                   "pulse_source": "kick", "max_flash_hz": 3.0, "fallback": "",
-                  "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain"}
+                  "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain",
+                  "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0,
+                  "twist_chance": 4}
 DEFAULT_CC = {"zoom": 1, "hue": 2, "kaleido": 3, "feedback": 4, "rgb_split": 5,
-              "flash": 6, "brightness": 7, "drift": 8, "shimmer": 9}
+              "flash": 6, "brightness": 7, "drift": 8, "shimmer": 9,
+              "mirror": 10, "true_angle": 11}
 DEFAULT_CC_VALUES = {"zoom": 0.5, "hue": 0.0, "kaleido": 0.0, "feedback": 0.0,
-                     "rgb_split": 0.0, "flash": 0.0, "brightness": 1.0,
-                     "drift": 0.5, "shimmer": 0.3}
+                     "rgb_split": 0.0, "flash": 0.25, "brightness": 1.0,
+                     "drift": 0.5, "shimmer": 0.3, "mirror": 0.0, "true_angle": 0.0}
 
 
 # ---- fractals (drawn live on the GPU, no file) ----
@@ -206,12 +242,15 @@ PALETTES = {  # phase offsets for the cosine color palette (red, green, blue)
     "fire": (0.0, 0.1, 0.2),
     "ice": (0.5, 0.6, 0.7),
     "acid": (0.8, 0.9, 0.3),
+    "okhsl": None,  # hue steps round the okhsl wheel at steady saturation and lightness (Bram Cohen's color space)
 }
 FRACTAL_DEFAULTS = {
     "mandelbrot": {"spot": "seahorse", "dive_bars": 16, "max_zoom": 20000.0, "iterations": 300,
-                   "palette": "rainbow", "color_bars": 4, "color_bands": 0.02, "resolution": 0.75},
+                   "palette": "okhsl", "saturation": 0.9, "lightness": 0.65,
+                   "color_bars": 4, "color_bands": 0.02, "resolution": 0.75},
     "julia": {"radius": 0.7885, "morph_bars": 32, "start": 0.5, "zoom": 1.0, "iterations": 200,
-              "palette": "rainbow", "color_bars": 4, "color_bands": 0.05, "resolution": 0.75},
+              "palette": "okhsl", "saturation": 0.9, "lightness": 0.65,
+              "color_bars": 4, "color_bands": 0.05, "resolution": 0.75},
 }
 
 
@@ -244,6 +283,7 @@ class Item:
     gain: float = 1.0
     fit: str = "contain"  # contain = whole piece, black around it; cover = fill frame, crop
     params: dict = field(default_factory=dict)  # fractal settings
+    twist: bool = True  # may be shown mirrored or turned (see twist_chance); false keeps it upright
 
 
 @dataclass
@@ -276,8 +316,10 @@ def _fractal_params(kind, it, prog, note, warnings):
             params[k] = it[k]
     where = f"song {prog}: note {note}"
     if params["palette"] not in PALETTES:
-        warnings.append(f"{where} palette must be one of {', '.join(PALETTES)}; using rainbow")
-        params["palette"] = "rainbow"
+        warnings.append(f"{where} palette must be one of {', '.join(PALETTES)}; using okhsl")
+        params["palette"] = "okhsl"
+    params["saturation"] = min(1.0, max(0.0, float(params["saturation"])))
+    params["lightness"] = min(0.95, max(0.05, float(params["lightness"])))
     if kind == "mandelbrot":
         if "center" in it:
             params["center"] = tuple(float(v) for v in it["center"])
@@ -346,7 +388,8 @@ def load_show(path):
             items[note] = Item(note, kind, p, float(it.get("start", 0.0)),
                                it.get("end"), it.get("bpm"),
                                bool(it.get("hold", False)), float(it.get("gain", 1.0)),
-                               "cover" if kind in FRACTAL_KINDS else fit, params)
+                               "cover" if kind in FRACTAL_KINDS else fit, params,
+                               bool(it.get("twist", True)))
         if prog in songs:
             warnings.append(f"program {prog} defined twice, last one wins")
         songs[prog] = Song(prog, s.get("name", f"program {prog}"), items)

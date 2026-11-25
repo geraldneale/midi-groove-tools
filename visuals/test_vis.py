@@ -1,5 +1,9 @@
 """Tests for the parts that don't need a GPU or MIDI hardware: python3 -m unittest test_vis"""
 import math
+import os
+import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,8 +13,11 @@ from PIL import Image
 
 from vis_core import (CLOCK, CONTINUE, PPQN, SPP, START, STOP, MidiState,
                       StrobeLimiter, beat_pulse, decay, load_show, Hit,
-                      dive_zoom, julia_c, MANDELBROT_SPOTS)
-from vis_media import ArraySource, ClipSource, ImageSource, cv2
+                      dive_zoom, julia_c, MANDELBROT_SPOTS,
+                      layer_matrix, one_in, pick_twist, TWISTS)
+from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, cv2
+import vis_color as vc
+import clip_grab as cg
 
 
 class TestMidiState(unittest.TestCase):
@@ -152,12 +159,190 @@ class TestFractals(unittest.TestCase):
         self.assertEqual(m.params["center"], MANDELBROT_SPOTS["spiral"])
         self.assertEqual(m.params["max_zoom"], 50000.0)            # capped
         self.assertEqual(m.fit, "cover")
-        self.assertEqual(j.params["palette"], "rainbow")           # unknown palette falls back
+        self.assertEqual((m.params["palette"], m.params["lightness"]), ("okhsl", 0.65))  # okhsl by default
+        self.assertEqual(j.params["palette"], "okhsl")             # unknown palette falls back to okhsl
         self.assertEqual(j.params["iterations"], 16)                # clamped
         self.assertEqual(items[42].params["center"], (0.25, 0.0))
         joined = " ".join(show.warnings)
         self.assertIn("50000", joined)
         self.assertIn("palette", joined)
+
+
+class TestColorMirror(unittest.TestCase):
+    def test_okhsl_known_values(self):
+        # published okhsl values for the sRGB primaries
+        for rgb, hue_deg, light in (((1, 0, 0), 29.23, 0.5681), ((0, 1, 0), 142.50, 0.8445),
+                                    ((0, 0, 1), 264.05, 0.3666)):
+            h, s, l = vc.srgb_to_okhsl(*rgb)
+            self.assertAlmostEqual(h * 360, hue_deg, delta=0.01)
+            self.assertAlmostEqual(s, 1.0, places=3)
+            self.assertAlmostEqual(l, light, places=3)
+        self.assertEqual(vc.srgb_to_okhsl(0.5, 0.5, 0.5)[1], 0.0)  # gray has no saturation
+
+    def test_round_trip(self):
+        import random
+        rnd = random.Random(3)
+        for _ in range(500):
+            c = [rnd.random() for _ in range(3)]
+            back = vc.okhsl_to_srgb(*vc.srgb_to_okhsl(*c))
+            self.assertLess(max(abs(x - y) for x, y in zip(c, back)), 1e-4)
+
+    def test_mirror_like_bram(self):
+        import random
+        rnd = random.Random(4)
+        for _ in range(300):
+            c, ang = [rnd.random() for _ in range(3)], rnd.random()
+            h, s, l = vc.srgb_to_okhsl(*c)
+            h2, s2, l2 = vc.srgb_to_okhsl(*vc.mirror(c, ang))
+            self.assertAlmostEqual(l2, l, places=3)              # lightness kept
+            if s > 0.05:
+                self.assertAlmostEqual(s2, s, delta=2e-3)        # saturation kept (okhsl can read a hair over 1 at the sRGB edge)
+                self.assertAlmostEqual(min((h2 - (ang - h)) % 1, (ang - h - h2) % 1), 0, places=3)
+            twice = vc.mirror(vc.mirror(c, ang), ang)            # mirroring twice gives it back
+            self.assertLess(max(abs(x - y) for x, y in zip(c, twice)), 1 / 255)  # under one level
+        for ang in (0.1, 0.6):
+            for t in vc.true_hues(ang):                          # true hues stay put
+                c = vc.okhsl_to_srgb(t, 0.7, 0.6)
+                self.assertLess(max(abs(x - y) for x, y in zip(c, vc.mirror(c, ang))), 1e-4)
+
+
+FAKE_YTDLP = r"""#!/usr/bin/env python3
+# Stand-in for yt-dlp in tests: answers playlist queries and writes a test video.
+import json, subprocess, sys
+a = sys.argv[1:]
+if "--flat-playlist" in a:
+    print(json.dumps({"entries": [{"id": "AAAAAAAAAAA", "title": "First", "duration": 125},
+                                  {"id": "BBBBBBBBBBB", "title": "Second", "duration": 61.0}]}))
+    sys.exit(0)
+if "fail" in a[-1]:
+    print("ERROR: Video unavailable", file=sys.stderr); sys.exit(1)
+out = a[a.index("-o") + 1].replace("%(ext)s", "mkv")
+dur = 4.0
+if "--download-sections" in a:
+    s, e = a[a.index("--download-sections") + 1].lstrip("*").split("-")
+    dur = float(e) - float(s)
+subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size=2560x1440:rate=24:duration={dur}",
+                "-c:v", "mjpeg", "-q:v", "8", out], check=True)
+"""
+
+
+@unittest.skipIf(shutil.which("ffmpeg") is None, "ffmpeg not installed")
+class TestClipGrab(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = Path(self.tmp.name)
+        fake = self.d / "bin" / "yt-dlp"
+        fake.parent.mkdir()
+        fake.write_text(FAKE_YTDLP)
+        fake.chmod(0o755)
+        self.old_path = os.environ["PATH"]
+        os.environ["PATH"] = f"{fake.parent}{os.pathsep}{self.old_path}"
+
+    def tearDown(self):
+        os.environ["PATH"] = self.old_path
+        self.tmp.cleanup()
+
+    def test_import_adds_only_new_videos(self):
+        lst = self.d / "clips.txt"
+        lst.write_text("https://youtu.be/AAAAAAAAAAA  0:10 0:20  note=40\n")
+        subprocess.run([sys.executable, str(Path(cg.__file__)), "import", "https://pl", str(lst)],
+                       check=True, capture_output=True)
+        text = lst.read_text()
+        self.assertEqual(text.count("AAAAAAAAAAA"), 1)               # already there, kept as is
+        self.assertIn("watch?v=BBBBBBBBBBB  # Second  (1:01)", text)
+        clips, errors = cg.read_list(lst)
+        self.assertEqual(errors, [])
+        self.assertEqual([c.whole for c in clips], [False, True])     # new lines default to the whole video
+
+    def test_fetch_cuts_and_converts(self):
+        lst = self.d / "clips.txt"
+        lst.write_text("# test\n"
+                       "https://youtu.be/CCCCCCCCCCC  1:00 1:02.5  song=0 note=42 name=spin\n"
+                       "https://youtu.be/DDDDDDDDDDD\n"
+                       "https://youtu.be/failfailfail  0:01 0:02\n"
+                       "https://youtu.be/EEEEEEEEEEE  0:05\n")
+        out = self.d / "clips"
+        (out).mkdir()
+        (out / "old_whole.mp4").write_bytes(b"x")
+        r = subprocess.run([sys.executable, str(Path(cg.__file__)), "fetch", str(lst), "--out", str(out)],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)                             # one failure, one bad line
+        self.assertIn("1 failed", r.stdout)
+        self.assertIn("Video unavailable", r.stdout)
+        self.assertIn("line 5: give both a start and an end", r.stdout)
+        self.assertIn("no longer in the list (left alone): old_whole.mp4", r.stdout)
+        self.assertIn('path = "clips/spin_1m00s-1m02.5s.mp4"', r.stdout)
+        spin = out / "spin_1m00s-1m02.5s.mp4"
+        clip = ClipSource(spin)
+        self.assertEqual(clip.frame.shape[:2], (1080, 1920))          # scaled down to 1080p
+        self.assertAlmostEqual(clip.fps, 30, delta=0.01)
+        self.assertAlmostEqual(clip.end, 2.5, delta=0.1)              # just the segment
+        clip.close()
+        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+                                "frame=pict_type", "-of", "csv=p=0", str(spin)], capture_output=True, text=True)
+        types = [t.strip(",") for t in probe.stdout.split()]
+        self.assertTrue(types and set(types) == {"I"})               # every frame a keyframe
+        self.assertTrue((out / "DDDDDDDDDDD_whole.mp4").exists())
+        self.assertEqual(list(out.glob("*.part*")), [])               # no half-made files left
+        # second run skips what's made
+        r2 = subprocess.run([sys.executable, str(Path(cg.__file__)), "fetch", str(lst), "--out", str(out)],
+                            capture_output=True, text=True)
+        self.assertIn("0 made, 2 already there", r2.stdout)
+
+
+class TestSurprises(unittest.TestCase):
+    def test_one_in_rate(self):
+        import random
+        rng = random.Random(5)
+        hits = sum(one_in(rng, 32) for _ in range(32000))
+        self.assertAlmostEqual(hits / 32000, 1 / 32, delta=0.004)
+        self.assertFalse(any(one_in(rng, 0) for _ in range(100)))      # 0 = never
+
+    def test_pick_twist(self):
+        import random
+        rng = random.Random(6)
+        picks = [pick_twist(rng, 4) for _ in range(8000)]
+        plain = picks.count((0, False)) / len(picks)
+        self.assertAlmostEqual(plain, 0.75, delta=0.02)
+        self.assertEqual(set(picks) - {(0, False)}, set(TWISTS))      # all five twists turn up
+        self.assertEqual({pick_twist(rng, 0) for _ in range(50)}, {(0, False)})
+
+    def test_matrix_without_twist_matches_plain_fit(self):
+        oa = 16 / 9
+        for a in (0.5, 1.0, 3.0):
+            wider = a > oa
+            cover = (oa / a, 1.0) if wider else (1.0, a / oa)
+            contain = (1.0, a / oa) if wider else (oa / a, 1.0)
+            for mode, (fx, fy) in (("cover", cover), ("contain", contain)):
+                m = layer_matrix(a, oa, mode)
+                for got, want in zip(m, (fx, 0.0, 0.0, fy)):
+                    self.assertAlmostEqual(got, want)
+
+    def test_twisted_pieces_fit(self):
+        import numpy as np
+        oa = 16 / 9
+        for a in (0.6, 1.0, 2.5):
+            for turns, mirrored in ((0, False),) + TWISTS:
+                m = layer_matrix(a, oa, "contain", turns, mirrored)
+                M = np.array([[m[0], m[2]], [m[1], m[3]]])
+                inv = np.linalg.inv(M)
+                corners = np.array([[x, y] for x in (-0.5, 0.5) for y in (-0.5, 0.5)]).T
+                on_screen = inv @ corners                      # every corner of the piece is on screen
+                self.assertLessEqual(np.abs(on_screen).max(), 0.5 + 1e-9)
+                self.assertAlmostEqual(np.abs(on_screen).max(), 0.5)  # and it touches an edge
+                mc = layer_matrix(a, oa, "cover", turns, mirrored)
+                Mc = np.array([[mc[0], mc[2]], [mc[1], mc[3]]])
+                self.assertLessEqual(np.abs(Mc @ corners).max(), 0.5 + 1e-9)  # cover: screen is all picture
+
+    def test_twist_setting_loads(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "a.png").write_bytes(b"x")
+            (Path(d) / "s.toml").write_text('[[song]]\n  [[song.item]]\n  note = 1\n  path = "a.png"\n  twist = false\n'
+                                            '  [[song.item]]\n  note = 2\n  path = "a.png"\n')
+            show = load_show(Path(d) / "s.toml")
+        self.assertFalse(show.songs[0].items[1].twist)
+        self.assertTrue(show.songs[0].items[2].twist)
+        self.assertEqual((show.output["big_pulse_chance"], show.output["twist_chance"]), (32, 4))
 
 
 class TestShowFile(unittest.TestCase):
@@ -256,6 +441,24 @@ class TestMedia(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ClipSource(path, start=3, end=2)
             clip.close()
+
+            # pool: clips open ahead of time and each take gets a fresh one from the start
+            pool = ClipPool()
+            factory = lambda: ClipSource(path, start=2.0, end=3.0)
+            pool.prepare(42, factory)
+            a = pool.take(42)
+            self.assertAlmostEqual(a.frame.mean() / 5, 20, delta=1)
+            a.update(0.5)
+            b = pool.take(42)                                   # second trigger: a new copy at the start
+            self.assertIsNot(a, b)
+            self.assertAlmostEqual(b.frame.mean() / 5, 20, delta=1)
+            c = pool.take(7, factory)                           # never prepared: opens right away
+            self.assertAlmostEqual(c.frame.mean() / 5, 20, delta=1)
+            with self.assertRaises(RuntimeError):
+                pool.take(9, lambda: ClipSource(Path(d) / "nope.mp4"))
+            for s in (a, b, c):
+                s.close()
+            pool.shutdown()
 
 
 if __name__ == "__main__":

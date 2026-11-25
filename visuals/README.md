@@ -26,13 +26,14 @@ Python 3.9 or newer. Not installed by the main `install.sh`.
 ## How the MPC talks to it
 
 On the visual channel (default 16):
-* **Note on** selects the image or clip mapped to that note in the current song. Velocity sets its intensity.
+* **Note on** selects the image or clip mapped to that note in the current song. Velocity sets its intensity. About 1 scene in 4 comes up mirrored, upside down or turned sideways (`twist_chance` in `[output]`, 0 = never); add `twist = false` to an item to keep it upright.
 * **Fractals:** an item can be `type = "mandelbrot"` (a tempo locked dive that floats back out and repeats) or `type = "julia"` (a shape that morphs on a loop). They're drawn live, need no file, and start fresh on each trigger. Settings are in the example show.toml. Lower `resolution` if an older laptop stutters.
 * **Note off** clears to black only if the item has `hold = true`; otherwise the scene stays until the next note.
-* **CC 1 to 9** control the effects (zoom punch, hue, kaleidoscope, feedback, RGB split, snare flash, brightness, drift, hat shimmer). See `[cc]` in show.toml.
+* **CC 1 to 11** control the effects (zoom punch, hue, kaleidoscope, feedback, RGB split, snare flash, brightness, drift, hat shimmer, color mirroring, true angle). See `[cc]` in show.toml.
+* **Color mirroring** (CC 10 amount, CC 11 true angle) is Bram Cohen's okhsl mirror from his color_cycling code, run on every pixel of everything on screen. Two opposite hues stay true, the ones 90 degrees from them swap, and the true pair travels round the color wheel once every `mirror_bars`, locked to tempo. Lightness never changes, so pictures keep their shape. With `mirror_bars = 0` it holds still and CC 11 aims the true hues on cue. The math is in vis_color.py, with a plain Python version the tests check the GPU against.
 * **Program change** switches song.
 
-Drum channel (default 10): kick punches the zoom, snare flashes (only if CC 6 is up, capped at 3 per second), hats add shimmer.
+Drum channel (default 10): kick punches the zoom (about 1 kick in 32 lands a bigger punch: `big_pulse_chance`, `big_pulse_size` in `[output]`), snare gives a gentle flash (CC 6 sets how strong, 0 turns it off; never more than 3 per second), hats add shimmer.
 
 MIDI clock gives the tempo, used for clip tempo stretch and for `pulse_source = "beat"`.
 
@@ -71,5 +72,4 @@ Only use footage you have the right to show publicly.
 ## Known gaps (next steps)
 
 * After a Song Position jump the app doesn't know which scene should be showing until the next scene note. The fix is to read each song's visual MIDI file and look up the scene at that position.
-* Video clips open when triggered, which can cause a small hitch. Preloading the next clip is planned.
 * GIMP layer parallax, tile reveals and video masked through art are not built yet.

@@ -22,6 +22,7 @@ max_flash_hz = 3        # photosensitivity cap; 0 disables flashes entirely
 fallback = "art/fallback.png"   # shown before the first scene and if MIDI goes silent
 idle_seconds = 5
 crossfade = 0.25        # seconds between scenes
+mirror_bars = 8         # color mirroring: bars for the true hues to travel once round (0 = hold still)
 fit = "contain"         # contain = whole piece with black around it; cover = fill the frame, cropping
 
 # CC number on the visual channel for each effect
@@ -35,6 +36,8 @@ flash = 6       # snare flash amount (rate limited)
 brightness = 7
 drift = 8       # slow pan on stills
 shimmer = 9     # hat driven split
+mirror = 10     # color mirroring amount (Bram Cohen's okhsl mirror); 0 = true colors
+true_angle = 11 # where the true hue pair sits; with mirror_bars = 0 this aims it on cue
 
 # values used until a CC arrives (0.0 to 1.0)
 [cc_defaults]
@@ -42,6 +45,8 @@ zoom = 0.5
 brightness = 1.0
 drift = 0.5
 shimmer = 0.3
+flash = 0.25    # gentle snare flash
+mirror = 1.0    # full color mirroring from the start
 
 # One [[song]] per MPC program change number. Items map a note on the
 # visual channel to an image or a video clip. Velocity sets intensity.
@@ -82,7 +87,7 @@ name = "Song 1"
   spot = "seahorse"    # or "spiral", or center = [x, y]
   dive_bars = 16       # bars to dive in; then it floats back out over the same and repeats
   max_zoom = 20000     # deepest zoom (up to 50000 before it breaks into blocks)
-  palette = "rainbow"  # rainbow, fire, ice or acid
+  palette = "okhsl"    # okhsl (steady lightness, Bram Cohen style), or rainbow, fire, ice, acid
   color_bars = 4       # colors cycle once every this many bars
 
   [[song.item]]
@@ -90,7 +95,8 @@ name = "Song 1"
   type = "julia"
   morph_bars = 32      # one full trip through its shapes
   start = 0.5          # where the trip begins (0.5 = the solid blob)
-  palette = "ice"
+  palette = "okhsl"
+  lightness = 0.7      # okhsl only: 0.05 dark to 0.95 pale; saturation = 0.9 also adjustable
   # also: radius (0.7885), zoom (1.0), iterations, resolution (0.25 to 1, lower for older laptops)
 
 [[song]]

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import random
 import sys
 import time
 
@@ -25,8 +26,9 @@ import pygame
 import rtmidi
 
 from vis_core import (FRACTAL_KINDS, PALETTES, MidiState, StrobeLimiter, beat_pulse,
-                      decay, dive_zoom, julia_c, load_show)
-from vis_media import ArraySource, ClipSource, ImageSource
+                      decay, dive_zoom, julia_c, layer_matrix, load_show, one_in, pick_twist)
+from vis_color import OKHSL_GLSL
+from vis_media import ArraySource, ClipPool, ClipSource, ImageSource
 
 VERT = """
 #version 330
@@ -40,12 +42,14 @@ FRAG = """
 uniform sampler2D tex_cur;
 uniform sampler2D tex_prev;
 uniform sampler2D tex_fb;
-uniform vec2 fit_cur;
-uniform vec2 fit_prev;
+uniform mat2 fit_cur;   // screen offset -> texture offset (fit, mirror, turn)
+uniform mat2 fit_prev;
 uniform float gain_cur, gain_prev, xfade, zoom, hue, kaleido, feedback;
 uniform float rgb_split, brightness, flash, drift, time;
+uniform float mirror_amount, mirror_angle;
 in vec2 uv;
 out vec4 frag;
+//OKHSL
 
 vec2 kal(vec2 p, float n) {
     if (n < 1.5) return p;
@@ -67,9 +71,9 @@ vec3 hue_rotate(vec3 c, float h) {
     return to_rgb * yiq;
 }
 
-vec3 layer(sampler2D t, vec2 fit, vec2 p, float split) {
-    vec2 q = (p - 0.5) * fit + 0.5;
-    vec2 o = vec2(split * fit.x, 0.0);
+vec3 layer(sampler2D t, mat2 fit, vec2 p, float split) {
+    vec2 q = fit * (p - 0.5) + 0.5;
+    vec2 o = fit * vec2(split, 0.0);
     vec2 inside = step(vec2(0.0), q) * step(q, vec2(1.0));  // black outside the piece
     return vec3(texture(t, q + o).r, texture(t, q).g, texture(t, q - o).b) * inside.x * inside.y;
 }
@@ -84,6 +88,7 @@ void main() {
     vec3 col = mix(b, a, xfade);
     vec3 fb = texture(tex_fb, (uv - 0.5) * 0.985 + 0.5).rgb;
     col = mix(col, max(col, fb * 0.96), feedback);
+    if (mirror_amount > 0.0) col = mix(col, color_mirror(col, mirror_angle), mirror_amount);
     col = clamp(hue_rotate(col, hue) * brightness, 0.0, 1.0);
     col = mix(col, vec3(1.0), clamp(flash, 0.0, 1.0));
     frag = vec4(col, 1.0);
@@ -100,8 +105,11 @@ uniform vec2 jc;           // julia constant
 uniform int max_iter;
 uniform float color_phase, color_bands;
 uniform vec3 palette;
+uniform int pal_okhsl;     // 1: hue round the okhsl wheel at steady saturation and lightness
+uniform float pal_sat, pal_light;
 in vec2 uv;
 out vec4 frag;
+//OKHSL
 void main() {
     vec2 p = (uv - 0.5) * vec2(aspect, 1.0) * scale + center;
     vec2 z = mode == 0 ? vec2(0.0) : p;
@@ -117,10 +125,15 @@ void main() {
     }
     if (n >= float(max_iter)) { frag = vec4(0.0, 0.0, 0.0, 1.0); return; }  // inside the set
     float smooth_n = n + 1.0 - log2(0.5 * log(r2));                          // no banding
-    vec3 col = 0.5 + 0.5 * cos(6.2831853 * (smooth_n * color_bands + color_phase + palette));
+    float t = smooth_n * color_bands + color_phase;
+    vec3 col = pal_okhsl == 1 ? okhsl_to_srgb(vec3(fract(t), pal_sat, pal_light))
+                              : 0.5 + 0.5 * cos(6.2831853 * (t + palette));
     frag = vec4(col, 1.0);
 }
 """
+
+FRAG = FRAG.replace("//OKHSL", OKHSL_GLSL)
+FRAG_FRACTAL = FRAG_FRACTAL.replace("//OKHSL", OKHSL_GLSL)
 
 BLIT = """
 #version 330
@@ -142,6 +155,7 @@ class Layer:
     def __init__(self, ctx, source, item=None, gain=1.0, mode="cover"):
         self.src, self.item, self.gain = source, item, gain
         self.mode = item.fit if item else mode
+        self.turns, self.mirrored = 0, False
         f = source.frame
         h, w = f.shape[:2]
         self.size = (w, h)
@@ -151,12 +165,8 @@ class Layer:
         source.update(0.0)  # clear the initial changed flag
 
     def fit(self, out_aspect):
-        """Texture scale for the shader. cover fills the frame and crops; contain shows it all."""
-        a = self.size[0] / self.size[1]
-        wider = a > out_aspect
-        if self.mode == "cover":
-            return (out_aspect / a, 1.0) if wider else (1.0, a / out_aspect)
-        return (1.0, a / out_aspect) if wider else (out_aspect / a, 1.0)
+        """Matrix for the shader: cover fills the frame and crops, contain shows it all; plus any twist."""
+        return layer_matrix(self.size[0] / self.size[1], out_aspect, self.mode, self.turns, self.mirrored)
 
     def update(self, dt, rate=1.0):
         if self.src.update(dt, rate):
@@ -179,6 +189,7 @@ class FractalLayer(Layer):
     def __init__(self, app, item, gain=1.0):
         self.app, self.item, self.gain, self.src = app, item, gain, None
         self.mode = "cover"
+        self.turns, self.mirrored = 0, False
         s = item.params["resolution"]
         self.size = (max(64, round(app.W * s)), max(36, round(app.H * s)))
         self.tex = app.ctx.texture(self.size, 4)
@@ -203,7 +214,11 @@ class FractalLayer(Layer):
         set_u(p, "max_iter", int(prm["iterations"]))
         set_u(p, "color_phase", self.beats / max(1e-6, float(prm["color_bars"]) * 4.0))
         set_u(p, "color_bands", float(prm["color_bands"]))
-        set_u(p, "palette", PALETTES[prm["palette"]])
+        okhsl = PALETTES[prm["palette"]] is None
+        set_u(p, "pal_okhsl", 1 if okhsl else 0)
+        set_u(p, "palette", (0.0, 0.0, 0.0) if okhsl else PALETTES[prm["palette"]])
+        set_u(p, "pal_sat", float(prm["saturation"]))
+        set_u(p, "pal_light", float(prm["lightness"]))
         self.fbo.use()
         self.app.fractal_vao.render(moderngl.TRIANGLE_STRIP)
 
@@ -303,9 +318,13 @@ class Show:
         self.cur = self.prev = None
         self.xfade_t0 = 0.0
         self.image_cache = {}
+        self.clip_pool = ClipPool()
         self.song = None
         self.select_song(0)
         self.last_snare_t = -1e9
+        self.mirror_beats = 0.0
+        self.rng = random.Random()
+        self.last_kick_t, self.last_beat, self.big = -1e9, None, False
         self.flash_t, self.flash_vel = -1e9, 0.0
 
     # ---- song and scene control ----
@@ -316,12 +335,15 @@ class Show:
             return
         self.song = song
         self.image_cache = {}
+        self.clip_pool.clear()
         for item in song.items.values():  # preload stills so triggers don't hit the disk
             if item.kind == "image" and item.path and item.path.exists():
                 try:
                     self.image_cache[item.note] = ImageSource(item.path).frame
                 except Exception as e:
                     print(f"cannot load {item.path}: {e}", file=sys.stderr)
+            elif item.kind == "clip" and item.path and item.path.exists():
+                self.clip_pool.prepare(item.note, self._clip_factory(item))  # opens in the background
         print(f"song {program}: {song.name} ({len(song.items)} items)")
 
     def make_source(self, item):
@@ -329,7 +351,11 @@ class Show:
             if item.note in self.image_cache:
                 return ArraySource.from_frame(self.image_cache[item.note])
             return ImageSource(item.path)
-        return ClipSource(item.path, item.start, item.end)
+        return self.clip_pool.take(item.note, self._clip_factory(item))
+
+    @staticmethod
+    def _clip_factory(item):
+        return lambda: ClipSource(item.path, item.start, item.end)
 
     def trigger(self, item, vel, now):
         gain = 1.0 if item is None else item.gain * (0.25 + 0.75 * vel)
@@ -342,6 +368,8 @@ class Show:
         except Exception as e:
             print(f"trigger failed for note {item.note}: {e}", file=sys.stderr)
             return
+        if item is not None and item.twist:
+            layer.turns, layer.mirrored = pick_twist(self.rng, int(self.show.output["twist_chance"]))
         if self.prev is not None:
             self.prev.release()
         self.prev, self.cur = self.cur, layer
@@ -370,10 +398,19 @@ class Show:
         offset_s = float(o["offset_ms"]) / 1000.0
         kick, snare, hat = self.state.hits()
 
+        # every so often a beat lands a bigger punch with a longer release
+        chance, size = int(o["big_pulse_chance"]), float(o["big_pulse_size"])
         if o["pulse_source"] == "beat":
-            pulse = beat_pulse(self.state.beats(now, offset_s)) if self.state.running else 0.0
+            beats = self.state.beats(now, offset_s)
+            if int(beats) != self.last_beat:
+                self.last_beat, self.big = int(beats), one_in(self.rng, chance)
+            pulse = beat_pulse(beats, 3.0 if self.big else 6.0) if self.state.running else 0.0
         else:  # kick driven: offset can only delay, so only negative values apply
-            pulse = decay(now + min(0.0, offset_s), kick, 0.12)
+            if kick.t != self.last_kick_t:
+                self.last_kick_t, self.big = kick.t, one_in(self.rng, chance)
+            pulse = decay(now + min(0.0, offset_s), kick, 0.25 if self.big else 0.12)
+        if self.big:
+            pulse *= size
 
         flash_amt = self.cc("flash")
         if snare.t != self.last_snare_t:
@@ -415,6 +452,13 @@ class Show:
         base = 1.0 + 0.08 * drift if a.mode == "cover" else 1.0  # cover needs a margin so drift never shows an edge
         set_u(p, "zoom", base * (1.0 + pulse * self.cc("zoom") * 0.15))
         set_u(p, "hue", self.cc("hue"))
+        # color mirroring: the true hue pair travels once round every mirror_bars (0 = hold still,
+        # so the true_angle knob alone aims it)
+        bars = float(o["mirror_bars"])
+        self.mirror_beats += dt * self.state.bpm / 60.0
+        travel = self.mirror_beats / (bars * 4.0) if bars > 0 else 0.0
+        set_u(p, "mirror_amount", self.cc("mirror"))
+        set_u(p, "mirror_angle", (travel + self.cc("true_angle")) % 1.0)
         set_u(p, "kaleido", 0.0 if k < 0.05 else 2.0 + round(k * 10))
         set_u(p, "feedback", self.cc("feedback"))
         set_u(p, "rgb_split", self.cc("rgb_split") + self.cc("shimmer") * decay(now, hat, 0.05))
@@ -501,6 +545,7 @@ def main():
     try:
         app.run()
     finally:
+        app.clip_pool.shutdown()
         pygame.quit()
 
 
