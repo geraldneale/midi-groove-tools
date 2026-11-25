@@ -10,7 +10,7 @@ Usage:
     python3 vis_render.py --list-ports
 
 Keys: Esc quit, 1-9 trigger the current song's items in note order,
-Space fake kick, S fake snare.
+Space fake kick.
 """
 from __future__ import annotations
 
@@ -25,10 +25,12 @@ import numpy as np
 import pygame
 import rtmidi
 
-from vis_core import (FRACTAL_KINDS, PALETTES, MidiState, StrobeLimiter, beat_pulse,
-                      decay, dive_zoom, julia_c, layer_matrix, load_show, one_in, pick_twist)
+from vis_core import (FRACTAL_KINDS, GENERATED_KINDS, PALETTES, TEXT_KINDS, MidiState,
+                      beat_pulse, decay, dive_zoom, generated_item, julia_c,
+                      layer_matrix, load_show, one_in, pick_twist)
 from vis_color import OKHSL_GLSL
 from vis_media import ArraySource, ClipPool, ClipSource, ImageSource
+from vis_text import TextScreen, make_feed
 
 VERT = """
 #version 330
@@ -45,8 +47,9 @@ uniform sampler2D tex_fb;
 uniform mat2 fit_cur;   // screen offset -> texture offset (fit, mirror, turn)
 uniform mat2 fit_prev;
 uniform float gain_cur, gain_prev, xfade, zoom, hue, kaleido, feedback;
-uniform float rgb_split, brightness, flash, drift, time;
+uniform float rgb_split, brightness, drift, time;
 uniform float mirror_amount, mirror_angle;
+uniform float mirror_cur, mirror_prev;   // 1 = this layer follows the color mirroring
 in vec2 uv;
 out vec4 frag;
 //OKHSL
@@ -85,12 +88,14 @@ void main() {
     float s = rgb_split * 0.012;
     vec3 a = layer(tex_cur, fit_cur, p, s) * gain_cur;
     vec3 b = layer(tex_prev, fit_prev, p, s) * gain_prev;
+    if (mirror_amount > 0.0) {
+        if (mirror_cur > 0.5) a = mix(a, color_mirror(a, mirror_angle), mirror_amount);
+        if (mirror_prev > 0.5 && xfade < 1.0) b = mix(b, color_mirror(b, mirror_angle), mirror_amount);
+    }
     vec3 col = mix(b, a, xfade);
-    vec3 fb = texture(tex_fb, (uv - 0.5) * 0.985 + 0.5).rgb;
+    vec3 fb = texture(tex_fb, (uv - 0.5) * 0.985 + 0.5).rgb;  // trails are already mirrored
     col = mix(col, max(col, fb * 0.96), feedback);
-    if (mirror_amount > 0.0) col = mix(col, color_mirror(col, mirror_angle), mirror_amount);
     col = clamp(hue_rotate(col, hue) * brightness, 0.0, 1.0);
-    col = mix(col, vec3(1.0), clamp(flash, 0.0, 1.0));
     frag = vec4(col, 1.0);
 }
 """
@@ -107,11 +112,14 @@ uniform float color_phase, color_bands;
 uniform vec3 palette;
 uniform int pal_okhsl;     // 1: hue round the okhsl wheel at steady saturation and lightness
 uniform float pal_sat, pal_light;
+uniform int ss;            // samples per pixel each way (2 = 4 samples): smooths the shimmer
+uniform vec2 px;           // one pixel, in uv
+uniform int log_color;     // 1: color by the log of the detail, so bands don't crowd as it dives
 in vec2 uv;
 out vec4 frag;
 //OKHSL
-void main() {
-    vec2 p = (uv - 0.5) * vec2(aspect, 1.0) * scale + center;
+vec3 shade(vec2 at) {
+    vec2 p = (at - 0.5) * vec2(aspect, 1.0) * scale + center;
     vec2 z = mode == 0 ? vec2(0.0) : p;
     vec2 c = mode == 0 ? p : jc;
     float n = 0.0;
@@ -123,12 +131,25 @@ void main() {
         if (r2 > 256.0) break;
         n += 1.0;
     }
-    if (n >= float(max_iter)) { frag = vec4(0.0, 0.0, 0.0, 1.0); return; }  // inside the set
-    float smooth_n = n + 1.0 - log2(0.5 * log(r2));                          // no banding
-    float t = smooth_n * color_bands + color_phase;
-    vec3 col = pal_okhsl == 1 ? okhsl_to_srgb(vec3(fract(t), pal_sat, pal_light))
-                              : 0.5 + 0.5 * cos(6.2831853 * (t + palette));
-    frag = vec4(col, 1.0);
+    if (n >= float(max_iter)) return vec3(0.0);                // inside the set
+    float smooth_n = max(n + 1.0 - log2(0.5 * log(r2)), 0.0);  // no banding
+    float detail = log_color == 1 ? log2(smooth_n + 1.0) : smooth_n;
+    float t = detail * color_bands + color_phase;
+    return pal_okhsl == 1 ? okhsl_to_srgb(vec3(fract(t), pal_sat, pal_light))
+                          : 0.5 + 0.5 * cos(6.2831853 * (t + palette));
+}
+
+void main() {
+    int n = max(ss, 1);
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        if (i >= n) break;
+        for (int j = 0; j < 4; j++) {
+            if (j >= n) break;
+            sum += shade(uv + (vec2(i, j) + 0.5 - 0.5 * float(n)) / float(n) * px);
+        }
+    }
+    frag = vec4(sum / float(n * n), 1.0);
 }
 """
 
@@ -156,6 +177,7 @@ class Layer:
         self.src, self.item, self.gain = source, item, gain
         self.mode = item.fit if item else mode
         self.turns, self.mirrored = 0, False
+        self.follows_mirror = item.mirror if item else True
         f = source.frame
         h, w = f.shape[:2]
         self.size = (w, h)
@@ -190,6 +212,7 @@ class FractalLayer(Layer):
         self.app, self.item, self.gain, self.src = app, item, gain, None
         self.mode = "cover"
         self.turns, self.mirrored = 0, False
+        self.follows_mirror = item.mirror
         s = item.params["resolution"]
         self.size = (max(64, round(app.W * s)), max(36, round(app.H * s)))
         self.tex = app.ctx.texture(self.size, 4)
@@ -214,6 +237,9 @@ class FractalLayer(Layer):
         set_u(p, "max_iter", int(prm["iterations"]))
         set_u(p, "color_phase", self.beats / max(1e-6, float(prm["color_bars"]) * 4.0))
         set_u(p, "color_bands", float(prm["color_bands"]))
+        set_u(p, "ss", int(prm["smoothing"]))
+        set_u(p, "px", (1.0 / self.size[0], 1.0 / self.size[1]))
+        set_u(p, "log_color", 1 if prm.get("log_color") else 0)
         okhsl = PALETTES[prm["palette"]] is None
         set_u(p, "pal_okhsl", 1 if okhsl else 0)
         set_u(p, "palette", (0.0, 0.0, 0.0) if okhsl else PALETTES[prm["palette"]])
@@ -224,6 +250,40 @@ class FractalLayer(Layer):
 
     def release(self):
         self.fbo.release()
+        self.tex.release()
+
+
+class TextLayer(Layer):
+    """midi-monitor's looks (monitor, hex, binary) drawn live from the incoming MIDI onto an
+    80 by 25 character screen, scaled up with crisp pixels like a CGA text monitor."""
+
+    screen = None  # one shared TextScreen (font loading is slow-ish)
+
+    def __init__(self, app, item, gain=1.0):
+        if TextLayer.screen is None:
+            TextLayer.screen = TextScreen()
+        self.app, self.item, self.gain, self.src = app, item, gain, None
+        self.mode = item.fit
+        self.turns, self.mirrored = 0, False
+        self.follows_mirror = item.mirror
+        self.feed = make_feed(item.kind, app.conn.name.split(":")[0] if app.conn.name else "MIDI")
+        self.seq, _ = app.state.log_since(10 ** 18)        # start from now, not old history
+        self.size = TextLayer.screen.size
+        self.tex = app.ctx.texture(self.size, 3, TextLayer.screen.render([]).tobytes())
+        self.tex.filter = (moderngl.NEAREST, moderngl.NEAREST)  # crisp pixel characters
+        self.tex.repeat_x = self.tex.repeat_y = False
+        self.next_draw = 0.0
+
+    def update(self, dt, rate=1.0):
+        self.seq, new = self.app.state.log_since(self.seq)
+        for t, data in new:
+            self.feed.feed(t - self.app.t0, data)
+        now = time.monotonic()
+        if self.feed.changed and now >= self.next_draw:  # at most 30 redraws a second
+            self.tex.write(TextLayer.screen.render(self.feed.visible()).tobytes())
+            self.feed.changed, self.next_draw = False, now + 1 / 30
+
+    def release(self):
         self.tex.release()
 
 
@@ -274,7 +334,6 @@ class Show:
         self.state = MidiState(m["visual_channel"], m["drum_channel"], m["kick_notes"],
                                m["snare_notes"], m["hat_notes"])
         self.conn = MidiConnection(self.state, m["port"])
-        self.limiter = StrobeLimiter(float(o["max_flash_hz"]))
 
         pygame.init()
         pygame.display.gl_set_attribute(pygame.GL_CONTEXT_MAJOR_VERSION, 3)
@@ -312,20 +371,22 @@ class Show:
         self.ping = 0
 
         self.black = Layer(self.ctx, ArraySource.solid())
+        self.t0 = time.monotonic()
         self.fallback = self.black
         if o["fallback"] and o["fallback"].exists():
             self.fallback = Layer(self.ctx, ImageSource(o["fallback"]), mode=o["fit"])
+        elif o["generate"]:
+            self.fallback = FractalLayer(self, generated_item("julia"))  # no image: the Julia set
+        self.gen_next = 0
         self.cur = self.prev = None
         self.xfade_t0 = 0.0
         self.image_cache = {}
         self.clip_pool = ClipPool()
         self.song = None
         self.select_song(0)
-        self.last_snare_t = -1e9
         self.mirror_beats = 0.0
         self.rng = random.Random()
         self.last_kick_t, self.last_beat, self.big = -1e9, None, False
-        self.flash_t, self.flash_vel = -1e9, 0.0
 
     # ---- song and scene control ----
     def select_song(self, program):
@@ -362,6 +423,8 @@ class Show:
         try:
             if item is not None and item.kind in FRACTAL_KINDS:
                 layer = FractalLayer(self, item, gain)
+            elif item is not None and item.kind in TEXT_KINDS:
+                layer = TextLayer(self, item, gain)
             else:
                 src = ArraySource.solid() if item is None else self.make_source(item)
                 layer = Layer(self.ctx, src, item, gain)
@@ -377,8 +440,11 @@ class Show:
 
     def handle(self, ev, now):
         kind = ev[0]
-        if kind == "note_on" and self.song:
-            item = self.song.items.get(ev[1])
+        if kind == "note_on":
+            item = self.song.items.get(ev[1]) if self.song else None
+            missing = item is None or (item.path is not None and not item.path.exists())
+            if missing and self.show.output["generate"]:
+                item = self.next_generated(ev[1])  # no art for this note: a live scene instead
             if item:
                 self.trigger(item, ev[2], now)
         elif kind == "note_off" and self.cur and self.cur.item:
@@ -389,6 +455,11 @@ class Show:
         elif kind in ("start", "stop", "continue", "locate"):
             print("transport:", *ev)
 
+    def next_generated(self, note):
+        kind = GENERATED_KINDS[self.gen_next % len(GENERATED_KINDS)]
+        self.gen_next += 1
+        return generated_item(kind, note)
+
     # ---- main loop ----
     def cc(self, name):
         return self.state.cc_value(self.show.cc_map[name], self.show.cc_defaults[name])
@@ -396,7 +467,7 @@ class Show:
     def frame(self, now, dt, t_show):
         o = self.show.output
         offset_s = float(o["offset_ms"]) / 1000.0
-        kick, snare, hat = self.state.hits()
+        kick, _snare, hat = self.state.hits()
 
         # every so often a beat lands a bigger punch with a longer release
         chance, size = int(o["big_pulse_chance"]), float(o["big_pulse_size"])
@@ -412,17 +483,13 @@ class Show:
         if self.big:
             pulse *= size
 
-        flash_amt = self.cc("flash")
-        if snare.t != self.last_snare_t:
-            self.last_snare_t = snare.t
-            if flash_amt > 0 and self.limiter.allow(now):
-                self.flash_t, self.flash_vel = now, snare.vel
-        flash = flash_amt * self.flash_vel * math.exp(-(now - self.flash_t) / 0.06)
 
         idle = self.state.idle_for(now)
         show_fallback = self.cur is None or (idle is not None and idle > float(o["idle_seconds"]))
         if show_fallback:
             a, b, xf, drift = self.fallback, self.black, 1.0, 0.6
+            if a is not self.black:
+                a.update(dt, 1.0)  # a live fallback (the Julia set) keeps moving
         else:
             xf = min(1.0, (now - self.xfade_t0) / max(1e-3, float(o["crossfade"])))
             if xf >= 1.0 and self.prev is not None:
@@ -458,12 +525,13 @@ class Show:
         self.mirror_beats += dt * self.state.bpm / 60.0
         travel = self.mirror_beats / (bars * 4.0) if bars > 0 else 0.0
         set_u(p, "mirror_amount", self.cc("mirror"))
+        set_u(p, "mirror_cur", 1.0 if a.follows_mirror else 0.0)
+        set_u(p, "mirror_prev", 1.0 if b.follows_mirror else 0.0)
         set_u(p, "mirror_angle", (travel + self.cc("true_angle")) % 1.0)
         set_u(p, "kaleido", 0.0 if k < 0.05 else 2.0 + round(k * 10))
         set_u(p, "feedback", self.cc("feedback"))
         set_u(p, "rgb_split", self.cc("rgb_split") + self.cc("shimmer") * decay(now, hat, 0.05))
         set_u(p, "brightness", self.cc("brightness"))
-        set_u(p, "flash", flash)
         set_u(p, "drift", drift)
         set_u(p, "time", t_show)
 
@@ -490,8 +558,6 @@ class Show:
     def keys(self, e, now):
         if e.key == pygame.K_SPACE:
             self.state.poke("kick")
-        elif e.key == pygame.K_s:
-            self.state.poke("snare")
         elif pygame.K_1 <= e.key <= pygame.K_9 and self.song:
             notes = sorted(self.song.items)
             i = e.key - pygame.K_1

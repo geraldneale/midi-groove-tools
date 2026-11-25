@@ -12,12 +12,14 @@ import numpy as np
 from PIL import Image
 
 from vis_core import (CLOCK, CONTINUE, PPQN, SPP, START, STOP, MidiState,
-                      StrobeLimiter, beat_pulse, decay, load_show, Hit,
+                      beat_pulse, decay, load_show, Hit,
                       dive_zoom, julia_c, MANDELBROT_SPOTS,
                       layer_matrix, one_in, pick_twist, TWISTS)
 from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, cv2
 import vis_color as vc
 import clip_grab as cg
+import vis_text as vt
+from vis_core import generated_item, GENERATED_KINDS
 
 
 class TestMidiState(unittest.TestCase):
@@ -107,12 +109,17 @@ class TestEnvelopes(unittest.TestCase):
         self.assertAlmostEqual(beat_pulse(3.0), 1.0)
         self.assertGreater(beat_pulse(3.1), beat_pulse(3.5))
 
-    def test_strobe_limiter(self):
-        lim = StrobeLimiter(3)
-        allowed = [t / 100 for t in range(0, 300, 5) if lim.allow(t / 100)]  # 20 Hz snare roll for 3 s
-        self.assertLessEqual(len(allowed), 9)
-        self.assertTrue(all(b - a >= 1 / 3 - 1e-9 for a, b in zip(allowed, allowed[1:])))
-        self.assertFalse(StrobeLimiter(0).allow(5))
+    def test_flash_is_gone(self):
+        import vis_core
+        self.assertNotIn("flash", vis_core.DEFAULT_CC)
+        self.assertNotIn("flash", vis_core.DEFAULT_CC_VALUES)
+        with tempfile.TemporaryDirectory() as d:                # an older show file still asking for it
+            (Path(d) / "s.toml").write_text("[output]\nmax_flash_hz = 3\n[cc]\nflash = 6\n[cc_defaults]\nflash = 0.25\n")
+            show = load_show(Path(d) / "s.toml")
+        self.assertNotIn("flash", show.cc_map)
+        self.assertNotIn("flash", show.cc_defaults)
+        self.assertNotIn("max_flash_hz", show.output)
+        self.assertIn("flash has been removed", " ".join(show.warnings))
 
 
 class TestFractals(unittest.TestCase):
@@ -160,6 +167,8 @@ class TestFractals(unittest.TestCase):
         self.assertEqual(m.params["max_zoom"], 50000.0)            # capped
         self.assertEqual(m.fit, "cover")
         self.assertEqual((m.params["palette"], m.params["lightness"]), ("okhsl", 0.65))  # okhsl by default
+        self.assertEqual((m.params["smoothing"], m.params["log_color"]), (3, True))       # calm, no shimmer
+        self.assertEqual((j.params["smoothing"], j.params["morph_bars"], j.params["color_bars"]), (2, 64, 8))
         self.assertEqual(j.params["palette"], "okhsl")             # unknown palette falls back to okhsl
         self.assertEqual(j.params["iterations"], 16)                # clamped
         self.assertEqual(items[42].params["center"], (0.25, 0.0))
@@ -343,6 +352,107 @@ class TestSurprises(unittest.TestCase):
         self.assertFalse(show.songs[0].items[1].twist)
         self.assertTrue(show.songs[0].items[2].twist)
         self.assertEqual((show.output["big_pulse_chance"], show.output["twist_chance"]), (32, 4))
+
+
+def spans_text(line):
+    return "".join(s[0] for s in line)
+
+
+class TestTextScenes(unittest.TestCase):
+    def test_log_since(self):
+        s = MidiState()
+        s.feed([0x99, 36, 100], t=1.0)
+        seq, new = s.log_since(0)
+        self.assertEqual(new, [(1.0, (0x99, 36, 100))])
+        s.feed([CLOCK], t=1.1)
+        seq2, new2 = s.log_since(seq)
+        self.assertEqual((seq2, new2), (seq + 1, [(1.1, (CLOCK,))]))
+        self.assertEqual(s.log_since(seq2)[1], [])
+        s.poke("kick", t=2.0)                                   # keyboard hits aren't MIDI bytes
+        self.assertEqual(s.log_since(seq2)[1], [])
+
+    def test_monitor_lines_match_midi_monitor(self):
+        f = vt.make_feed("monitor", "FakeMPC")
+        f.feed(0.5, [START])
+        f.feed(1.25, [0x99, 36, 127])
+        f.feed(1.30, [0x89, 36, 0])
+        f.feed(1.40, [0xBF, 2, 64])
+        f.feed(1.50, [0xCF, 3])
+        f.feed(1.60, [0xFE])                                    # active sensing: hidden
+        lines = [spans_text(l) for l in f.visible()]
+        self.assertEqual(len(lines), 5)
+        self.assertIn(" START ", lines[0])
+        self.assertTrue(lines[1].startswith("    1.250  FakeMPC"))
+        self.assertIn("ch10 on  C1   " + vt.BLOCK * 32, lines[1])  # velocity 127 = 32 blocks
+        self.assertIn("ch10 off C1", lines[2])
+        self.assertIn("CC   2 = 64", lines[3])
+        self.assertIn(" program 3 ", lines[4])
+        self.assertEqual(f.visible()[1][4][1], "lightred")      # channel 10 color, as midi-monitor
+        self.assertEqual(vt.note_name(60), "C3")                # Logic: middle C = C3
+
+    def test_monitor_bar_lines_follow_clock(self):
+        f = vt.make_feed("monitor")
+        f.feed(0.0, [START])
+        for i in range(97):
+            f.feed(i * 0.02, [CLOCK])
+        bars = [spans_text(l) for l in f.visible() if "bar" in spans_text(l)]
+        self.assertEqual(len(bars), 2)
+        self.assertIn("bar 1", bars[0])
+        self.assertIn("bar 2     125.0 BPM", bars[1])         # midi-monitor's exact spacing
+
+    def test_hex_and_binary_rows(self):
+        h = vt.make_feed("hex")
+        for _ in range(6):                                      # 18 bytes: one full row and two more
+            h.feed(0, [0x99, 0x24, 0x78])
+        rows = [spans_text(l) for l in h.visible()]
+        self.assertEqual(rows[0], "000000  99 24 78 99 24 78 99 24 78 99 24 78 99 24 78 99")
+        self.assertEqual(rows[1], "000010  24 78")              # row still filling is shown too
+        b = vt.make_feed("binary")
+        b.feed(0, [0xF8])
+        self.assertEqual(spans_text(b.visible()[0]), "000000  11111000")
+        self.assertEqual(b.visible()[0][2][1], vt.DIM)          # clock bytes dim, like --hex
+        self.assertEqual(vt.byte_color(0, 0x99)[0], "lightred")
+        self.assertEqual(vt.byte_color(0, 0xFA), ("black", "green"))
+
+    def test_screen_is_crisp_cga(self):
+        import numpy as np
+        scr = vt.TextScreen()
+        f = vt.make_feed("monitor")
+        for i in range(40):
+            f.feed(i, [0x90 | (i % 16), 40 + i, 20 + 2 * i])
+        img = scr.render(f.visible())
+        self.assertEqual(img.shape, (scr.size[1], scr.size[0], 3))
+        colors = {tuple(c) for c in np.unique(img.reshape(-1, 3), axis=0)}
+        self.assertLessEqual(colors, {tuple(v) for v in vt.CGA.values()})  # no anti-aliasing
+        self.assertGreater(len(colors), 5)
+        self.assertEqual(scr.render([]).max(), 0)               # empty screen is black
+
+    def test_every_scene_draws_with_a_row_half_full(self):
+        scr = vt.TextScreen()
+        for kind in vt.TEXT_KINDS:
+            f = vt.make_feed(kind, "FakeMPC")
+            f.feed(0.0, [START])
+            for i in range(37):                                 # leaves the hex and binary rows part full
+                f.feed(i * 0.02, [CLOCK])
+                f.feed(i * 0.02, [0x99, 36, 100])
+            for line in f.visible():
+                self.assertTrue(all(len(s) == 3 for s in line), kind)
+            self.assertGreater(scr.render(f.visible()).max(), 0, kind)
+
+    def test_generated_items(self):
+        self.assertEqual(GENERATED_KINDS, ("mandelbrot", "julia", "monitor", "hex", "binary"))
+        j, m = generated_item("julia"), generated_item("monitor")
+        self.assertEqual((j.params["palette"], j.fit, j.mirror, j.twist), ("okhsl", "cover", True, True))
+        self.assertEqual((m.params, m.fit, m.mirror, m.twist), ({}, "contain", False, False))
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "s.toml").write_text('[[song]]\n  [[song.item]]\n  note = 50\n  type = "hex"\n'
+                                            '  [[song.item]]\n  note = 51\n  type = "binary"\n  mirror = true\n')
+            show = load_show(Path(d) / "s.toml")
+        hx, bn = show.songs[0].items[50], show.songs[0].items[51]
+        self.assertEqual((hx.kind, hx.path, hx.mirror, hx.twist), ("hex", None, False, False))
+        self.assertTrue(bn.mirror)                              # any text scene can opt in
+        self.assertEqual(show.warnings, [])
+        self.assertTrue(show.output["generate"])
 
 
 class TestShowFile(unittest.TestCase):

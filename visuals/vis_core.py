@@ -1,6 +1,6 @@
 """Groovelab26 visuals: core logic.
 
-MIDI parsing, show config loading, envelopes and the strobe limiter.
+MIDI parsing, show config loading and envelopes.
 Nothing here touches the GPU or a MIDI library, so it runs and tests anywhere.
 """
 from __future__ import annotations
@@ -55,6 +55,8 @@ class MidiState:
         self.kick, self.snare, self.hat = Hit(), Hit(), Hit()
         self.last_msg_t = None
         self._events = deque()
+        self._log = deque(maxlen=4096)  # (seq, time, bytes) of every message, for the text scenes
+        self._seq = 0
 
     # ---- input side (MIDI thread) ----
     def feed(self, data, t=None):
@@ -64,6 +66,8 @@ class MidiState:
         status = data[0]
         with self._lock:
             self.last_msg_t = t
+            self._seq += 1
+            self._log.append((self._seq, t, tuple(data)))
             if status == CLOCK:
                 self._on_clock(t)
             elif status == START:
@@ -124,6 +128,12 @@ class MidiState:
             self._events.append(("program", data[1]))
 
     # ---- output side (render thread) ----
+    def log_since(self, seq):
+        """Raw messages newer than seq: (newest seq, [(time, bytes), ...])."""
+        with self._lock:
+            new = [(t, d) for s, t, d in self._log if s > seq]
+            return self._seq, new
+
     def drain_events(self):
         with self._lock:
             ev = list(self._events)
@@ -167,20 +177,6 @@ def beat_pulse(beats, sharpness=6.0):
     return math.exp(-(beats % 1.0) * sharpness)
 
 
-class StrobeLimiter:
-    """Caps full screen flashes at max_hz (photosensitivity safety). 0 disables flashes."""
-
-    def __init__(self, max_hz=3.0):
-        self.min_gap = 1.0 / max_hz if max_hz > 0 else None
-        self.last = -1e9
-
-    def allow(self, t):
-        if self.min_gap is None or t - self.last < self.min_gap:
-            return False
-        self.last = t
-        return True
-
-
 # ---- surprises ----
 # (quarter turns, mirrored): mirror left to right, upside down mirror, upside down, turned either way
 TWISTS = ((0, True), (2, True), (2, False), (1, False), (3, False))
@@ -219,20 +215,22 @@ DEFAULT_MIDI = {"port": "MPC", "visual_channel": 16, "drum_channel": 10,
                 "kick_notes": [36], "snare_notes": [38, 40], "hat_notes": [42, 44, 46]}
 DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "fullscreen": False, "display": 0, "fps": 60, "offset_ms": 0,
-                  "pulse_source": "kick", "max_flash_hz": 3.0, "fallback": "",
+                  "pulse_source": "kick", "fallback": "",
                   "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain",
                   "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0,
-                  "twist_chance": 4}
+                  "twist_chance": 4, "generate": True}
 DEFAULT_CC = {"zoom": 1, "hue": 2, "kaleido": 3, "feedback": 4, "rgb_split": 5,
-              "flash": 6, "brightness": 7, "drift": 8, "shimmer": 9,
+              "brightness": 7, "drift": 8, "shimmer": 9,
               "mirror": 10, "true_angle": 11}
 DEFAULT_CC_VALUES = {"zoom": 0.5, "hue": 0.0, "kaleido": 0.0, "feedback": 0.0,
-                     "rgb_split": 0.0, "flash": 0.25, "brightness": 1.0,
+                     "rgb_split": 0.0, "brightness": 1.0,
                      "drift": 0.5, "shimmer": 0.3, "mirror": 0.0, "true_angle": 0.0}
 
 
 # ---- fractals (drawn live on the GPU, no file) ----
 FRACTAL_KINDS = ("mandelbrot", "julia")
+TEXT_KINDS = ("monitor", "hex", "binary")  # midi-monitor's looks, drawn from the live MIDI
+GENERATED_KINDS = FRACTAL_KINDS + TEXT_KINDS  # made live, no file; also stand in for missing art
 MANDELBROT_SPOTS = {  # points on the edge of the set that stay detailed as you dive
     "seahorse": (-0.743643887037151, 0.131825904205330),
     "spiral": (-0.761574, -0.0847596),
@@ -247,10 +245,12 @@ PALETTES = {  # phase offsets for the cosine color palette (red, green, blue)
 FRACTAL_DEFAULTS = {
     "mandelbrot": {"spot": "seahorse", "dive_bars": 16, "max_zoom": 20000.0, "iterations": 300,
                    "palette": "okhsl", "saturation": 0.9, "lightness": 0.65,
-                   "color_bars": 4, "color_bands": 0.02, "resolution": 0.75},
-    "julia": {"radius": 0.7885, "morph_bars": 32, "start": 0.5, "zoom": 1.0, "iterations": 200,
+                   "color_bars": 4, "color_bands": 0.6, "log_color": True, "smoothing": 3,
+                   "resolution": 0.75},
+    "julia": {"radius": 0.7885, "morph_bars": 64, "start": 0.5, "zoom": 1.0, "iterations": 200,
               "palette": "okhsl", "saturation": 0.9, "lightness": 0.65,
-              "color_bars": 4, "color_bands": 0.05, "resolution": 0.75},
+              "color_bars": 8, "color_bands": 0.05, "log_color": False, "smoothing": 2,
+              "resolution": 0.75},
 }
 
 
@@ -284,6 +284,7 @@ class Item:
     fit: str = "contain"  # contain = whole piece, black around it; cover = fill frame, crop
     params: dict = field(default_factory=dict)  # fractal settings
     twist: bool = True  # may be shown mirrored or turned (see twist_chance); false keeps it upright
+    mirror: bool = True  # follows the color mirroring; text scenes keep their true CGA colors by default
 
 
 @dataclass
@@ -307,6 +308,13 @@ class Show:
 def _resolve(base, p):
     p = Path(p).expanduser()
     return p if p.is_absolute() else base / p
+
+
+def generated_item(kind, note=-1):
+    """A scene made live (fractal or text) with default settings, e.g. to stand in for missing art."""
+    params = _fractal_params(kind, {}, "-", note, []) if kind in FRACTAL_KINDS else {}
+    return Item(note, kind, None, fit="cover" if kind in FRACTAL_KINDS else "contain",
+                params=params, twist=kind not in TEXT_KINDS, mirror=kind not in TEXT_KINDS)
 
 
 def _fractal_params(kind, it, prog, note, warnings):
@@ -333,6 +341,8 @@ def _fractal_params(kind, it, prog, note, warnings):
             params["max_zoom"] = 50000.0
     params["resolution"] = min(1.0, max(0.25, float(params["resolution"])))
     params["iterations"] = min(2000, max(16, int(params["iterations"])))
+    params["smoothing"] = min(4, max(1, int(params["smoothing"])))   # 1 = off, 2 = 4 samples, 3 = 9, 4 = 16
+    params["log_color"] = bool(params["log_color"])
     return params
 
 
@@ -345,6 +355,12 @@ def load_show(path):
     output = {**DEFAULT_OUTPUT, **raw.get("output", {})}
     cc_map = {**DEFAULT_CC, **raw.get("cc", {})}
     cc_defaults = {**DEFAULT_CC_VALUES, **raw.get("cc_defaults", {})}
+    # the snare flash was taken out for good (photosensitivity); older show files may still mention it
+    if "flash" in cc_map or "flash" in cc_defaults or "max_flash_hz" in output:
+        warnings.append("the screen flash has been removed; the flash lines in show.toml are ignored")
+    for d in (cc_map, cc_defaults, output):
+        d.pop("flash", None)
+        d.pop("max_flash_hz", None)
     if output["fit"] not in ("contain", "cover"):
         warnings.append(f"fit must be contain or cover, got {output['fit']!r}; using contain")
         output["fit"] = "contain"
@@ -362,7 +378,7 @@ def load_show(path):
         items = {}
         for it in s.get("item", []):
             kind = it.get("type", "image")
-            if kind not in ("image", "clip") + FRACTAL_KINDS:
+            if kind not in ("image", "clip") + GENERATED_KINDS:
                 warnings.append(f"song {prog}: unknown type {kind!r}, skipped")
                 continue
             if "note" not in it:
@@ -372,6 +388,8 @@ def load_show(path):
             p, params = None, {}
             if kind in FRACTAL_KINDS:
                 params = _fractal_params(kind, it, prog, note, warnings)
+            elif kind in TEXT_KINDS:
+                pass
             elif "path" not in it:
                 warnings.append(f"song {prog}: note {note} needs a path, skipped")
                 continue
@@ -389,7 +407,8 @@ def load_show(path):
                                it.get("end"), it.get("bpm"),
                                bool(it.get("hold", False)), float(it.get("gain", 1.0)),
                                "cover" if kind in FRACTAL_KINDS else fit, params,
-                               bool(it.get("twist", True)))
+                               bool(it.get("twist", kind not in TEXT_KINDS)),
+                               bool(it.get("mirror", kind not in TEXT_KINDS)))
         if prog in songs:
             warnings.append(f"program {prog} defined twice, last one wins")
         songs[prog] = Song(prog, s.get("name", f"program {prog}"), items)
