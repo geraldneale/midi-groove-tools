@@ -432,7 +432,7 @@ class Show:
             print(f"trigger failed for note {item.note}: {e}", file=sys.stderr)
             return
         if item is not None and item.twist:
-            layer.turns, layer.mirrored = pick_twist(self.rng, int(self.show.output["twist_chance"]))
+            layer.turns, layer.mirrored = pick_twist(self.rng, int(self.show.output["twist_chance"]), item.twist)
         if self.prev is not None:
             self.prev.release()
         self.prev, self.cur = self.cur, layer

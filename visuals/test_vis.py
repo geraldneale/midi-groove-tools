@@ -315,6 +315,9 @@ class TestSurprises(unittest.TestCase):
         self.assertAlmostEqual(plain, 0.75, delta=0.02)
         self.assertEqual(set(picks) - {(0, False)}, set(TWISTS))      # all five twists turn up
         self.assertEqual({pick_twist(rng, 0) for _ in range(50)}, {(0, False)})
+        faces = {pick_twist(rng, 2, "mirror") for _ in range(400)}       # faces: mirror only, never turned
+        self.assertEqual(faces, {(0, False), (0, True)})
+        self.assertEqual({pick_twist(rng, 1, False) for _ in range(50)}, {(0, False)})
 
     def test_matrix_without_twist_matches_plain_fit(self):
         oa = 16 / 9
@@ -347,10 +350,15 @@ class TestSurprises(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "a.png").write_bytes(b"x")
             (Path(d) / "s.toml").write_text('[[song]]\n  [[song.item]]\n  note = 1\n  path = "a.png"\n  twist = false\n'
-                                            '  [[song.item]]\n  note = 2\n  path = "a.png"\n')
+                                            '  [[song.item]]\n  note = 2\n  path = "a.png"\n'
+                                            '  [[song.item]]\n  note = 3\n  path = "a.png"\n  twist = "mirror"\n'
+                                            '  [[song.item]]\n  note = 4\n  path = "a.png"\n  twist = "sideways"\n')
             show = load_show(Path(d) / "s.toml")
         self.assertFalse(show.songs[0].items[1].twist)
         self.assertTrue(show.songs[0].items[2].twist)
+        self.assertEqual(show.songs[0].items[3].twist, "mirror")
+        self.assertFalse(show.songs[0].items[4].twist)                 # unknown value: kept upright
+        self.assertIn('twist must be true, false or "mirror"', " ".join(show.warnings))
         self.assertEqual((show.output["big_pulse_chance"], show.output["twist_chance"]), (32, 4))
 
 

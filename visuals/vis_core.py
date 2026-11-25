@@ -187,9 +187,12 @@ def one_in(rng, n):
     return n > 0 and rng.random() < 1.0 / n
 
 
-def pick_twist(rng, chance):
-    """For a new scene: (quarter_turns, mirrored), usually (0, False)."""
-    return rng.choice(TWISTS) if one_in(rng, chance) else (0, False)
+def pick_twist(rng, chance, allowed=True):
+    """For a new scene: (quarter_turns, mirrored), usually (0, False).
+    allowed: True for any twist, "mirror" for a left to right mirror only (faces), False for none."""
+    if not allowed or not one_in(rng, chance):
+        return (0, False)
+    return (0, True) if allowed == "mirror" else rng.choice(TWISTS)
 
 
 def layer_matrix(img_aspect, out_aspect, mode="contain", turns=0, mirrored=False):
@@ -283,7 +286,8 @@ class Item:
     gain: float = 1.0
     fit: str = "contain"  # contain = whole piece, black around it; cover = fill frame, crop
     params: dict = field(default_factory=dict)  # fractal settings
-    twist: bool = True  # may be shown mirrored or turned (see twist_chance); false keeps it upright
+    twist: bool | str = True  # True: may be mirrored or turned (see twist_chance); "mirror": only
+    # mirrored left to right, never turned (faces); False: always as it is
     mirror: bool = True  # follows the color mirroring; text scenes keep their true CGA colors by default
 
 
@@ -308,6 +312,13 @@ class Show:
 def _resolve(base, p):
     p = Path(p).expanduser()
     return p if p.is_absolute() else base / p
+
+
+def _twist(value, prog, note, warnings):
+    if value in (True, False, "mirror"):
+        return value
+    warnings.append(f'song {prog}: note {note} twist must be true, false or "mirror"; using false')
+    return False
 
 
 def generated_item(kind, note=-1):
@@ -407,7 +418,7 @@ def load_show(path):
                                it.get("end"), it.get("bpm"),
                                bool(it.get("hold", False)), float(it.get("gain", 1.0)),
                                "cover" if kind in FRACTAL_KINDS else fit, params,
-                               bool(it.get("twist", kind not in TEXT_KINDS)),
+                               _twist(it.get("twist", kind not in TEXT_KINDS), prog, note, warnings),
                                bool(it.get("mirror", kind not in TEXT_KINDS)))
         if prog in songs:
             warnings.append(f"program {prog} defined twice, last one wins")
