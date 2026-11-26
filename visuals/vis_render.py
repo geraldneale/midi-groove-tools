@@ -53,7 +53,7 @@ uniform float rgb_split, brightness, drift, time;
 uniform float mirror_amount, mirror_angle;
 uniform float mirror_cur, mirror_prev;   // 1 = this layer follows the color mirroring
 uniform float colorize_cur, colorize_prev;  // 1 = color this layer by lightness (black and white art)
-uniform float col_hue, col_span, col_sat;
+uniform float col_hue, col_span, col_sat, col_low, col_high;
 in vec2 uv;
 out vec4 frag;
 //OKHSL
@@ -78,16 +78,16 @@ vec3 hue_rotate(vec3 c, float h) {
     return to_rgb * yiq;
 }
 
-// a black and white picture gets color from its own lightness: each pixel keeps its exact okhsl
-// lightness and takes a hue from how light it is, so shadows and highlights differ and the
-// mirroring has color to turn
+// a black and white picture gets color from its own lightness: it takes a hue from how light it is,
+// so shadows and highlights differ and the mirroring has color to turn. Pure black and white can't
+// hold color, so lightness is squeezed into col_low..col_high first: black becomes a deep color,
+// white a light one (a duotone for geometric black and white art), and the order of light and
+// dark is kept everywhere
 vec3 colorize(vec3 c) {
     vec3 lin = vec3(srgb_to_lin(clamp(c.r, 0.0, 1.0)), srgb_to_lin(clamp(c.g, 0.0, 1.0)),
                     srgb_to_lin(clamp(c.b, 0.0, 1.0)));
-    float l = ok_toe(lin_to_oklab(lin).x);
-    if (l <= 0.002) return vec3(0.0);
-    if (l >= 0.998) return vec3(1.0);
-    return okhsl_to_srgb(vec3(fract(col_hue + l * col_span), col_sat, l));
+    float l = clamp(ok_toe(lin_to_oklab(lin).x), 0.0, 1.0);
+    return okhsl_to_srgb(vec3(fract(col_hue + l * col_span), col_sat, mix(col_low, col_high, l)));
 }
 
 vec3 layer(sampler2D t, mat2 fit, vec2 p, float split) {
@@ -655,6 +655,8 @@ class Show:
         set_u(p, "col_hue", float(o["colorize_hue"]))
         set_u(p, "col_span", float(o["colorize_span"]))
         set_u(p, "col_sat", float(o["colorize_saturation"]))
+        set_u(p, "col_low", float(o["colorize_low"]))
+        set_u(p, "col_high", float(o["colorize_high"]))
         set_u(p, "mirror_angle", (travel + self.cc("true_angle")) % 1.0)
         set_u(p, "kaleido", 0.0 if k < 0.05 else 2.0 + round(k * 10))
         set_u(p, "feedback", self.cc("feedback"))

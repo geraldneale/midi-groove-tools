@@ -232,7 +232,8 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain",
                   "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 6.0, "skip_pulse_chance": 20,
                   "medium_pulse_chance": 8, "medium_pulse_size": 2.0,
-                  "colorize": True, "colorize_saturation": 0.7, "colorize_hue": 0.62, "colorize_span": 0.55,
+                  "colorize": True, "colorize_saturation": 0.8, "colorize_hue": 0.62, "colorize_span": 0.55,
+                  "colorize_low": 0.15, "colorize_high": 0.85,
                   "twist_chance": 4, "generate": True}
 DEFAULT_SHUFFLE = {"enabled": True, "note": 60, "skip_note": 61, "clips": "clips", "art": "art",
                    "image_bars": 16, "max_clip_bars": 16, "skip_fade_beats": 1.0}
