@@ -7,7 +7,7 @@ frame changed and needs uploading.
 from __future__ import annotations
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 try:
     import cv2
@@ -45,7 +45,9 @@ class ArraySource:
 
 class ImageSource(ArraySource):
     def __init__(self, path, max_side=MAX_IMAGE_SIDE):
-        img = Image.open(path).convert("RGB")
+        # follow the file's rotation tag (phone photos and some editors store the picture turned and
+        # say so in a tag), so pieces come up the way Finder and Preview show them
+        img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
         img.thumbnail((max_side, max_side), Image.LANCZOS)  # only ever shrinks
         super().__init__(np.asarray(img))
 

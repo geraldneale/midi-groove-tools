@@ -554,6 +554,22 @@ class TestMedia(unittest.TestCase):
         self.assertTrue(src.update(0.016))
         self.assertFalse(src.update(0.016))
 
+    def test_rotation_tag_is_followed(self):
+        # stored upside down with a tag saying "turn it 180": must load the right way up
+        upright = np.zeros((60, 40, 3), np.uint8)
+        upright[:20] = 255                                       # white band at the top
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "tagged.jpg"
+            stored = Image.fromarray(upright).rotate(180)
+            exif = Image.Exif()
+            exif[0x0112] = 3                                      # Orientation: rotate 180
+            stored.save(p, exif=exif, quality=95)
+            src = ImageSource(p)
+        top = np.flipud(src.frame)[:20].mean()                   # frame is stored bottom row first
+        bottom = np.flipud(src.frame)[-20:].mean()
+        self.assertGreater(top, 200)
+        self.assertLess(bottom, 50)
+
     def test_solid(self):
         self.assertEqual(ArraySource.solid((1, 2, 3)).frame[0, 0].tolist(), [1, 2, 3])
 
