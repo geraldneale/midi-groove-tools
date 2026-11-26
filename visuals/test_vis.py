@@ -15,7 +15,7 @@ from vis_core import (CLOCK, CONTINUE, PPQN, SPP, START, STOP, MidiState,
                       beat_pulse, decay, load_show, Hit,
                       dive_zoom, julia_c, MANDELBROT_SPOTS,
                       layer_matrix, one_in, pick_twist, TWISTS, roll_pulse)
-from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, cv2
+from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, cv2, is_colorless
 import vis_color as vc
 import clip_grab as cg
 import vis_text as vt
@@ -748,6 +748,30 @@ class TestMedia(unittest.TestCase):
         bottom = np.flipud(src.frame)[-20:].mean()
         self.assertGreater(top, 200)
         self.assertLess(bottom, 50)
+
+    def test_colorless_detection(self):
+        gray = np.tile(np.linspace(0, 255, 200).astype(np.uint8)[None, :, None], (100, 1, 3))
+        self.assertTrue(is_colorless(gray))                              # black and white
+        sepia = gray.astype(int) + np.array([12, 4, -8])
+        self.assertTrue(is_colorless(np.clip(sepia, 0, 255).astype(np.uint8)))  # faint sepia
+        colorful = np.zeros((100, 200, 3), np.uint8)
+        colorful[:, :100] = (220, 40, 40)
+        colorful[:, 100:] = (40, 80, 220)
+        self.assertFalse(is_colorless(colorful))
+        speck = gray.copy()
+        speck[:5, :5] = (255, 0, 0)                                     # a red signature corner
+        self.assertTrue(is_colorless(speck))                             # still a black and white piece
+
+    def test_colorize_setting(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "a.png").write_bytes(b"x")
+            (Path(d) / "s.toml").write_text('[[song]]\n  [[song.item]]\n  note = 1\n  path = "a.png"\n'
+                                            '  [[song.item]]\n  note = 2\n  path = "a.png"\n  colorize = false\n'
+                                            '  [[song.item]]\n  note = 3\n  path = "a.png"\n  colorize = true\n')
+            show = load_show(Path(d) / "s.toml")
+        items = show.songs[0].items
+        self.assertEqual((items[1].colorize, items[2].colorize, items[3].colorize), (None, False, True))
+        self.assertTrue(show.output["colorize"])                         # automatic by default
 
     def test_solid(self):
         self.assertEqual(ArraySource.solid((1, 2, 3)).frame[0, 0].tolist(), [1, 2, 3])

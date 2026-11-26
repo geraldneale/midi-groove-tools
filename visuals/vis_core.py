@@ -232,6 +232,7 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain",
                   "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 6.0, "skip_pulse_chance": 20,
                   "medium_pulse_chance": 8, "medium_pulse_size": 2.0,
+                  "colorize": True, "colorize_saturation": 0.7, "colorize_hue": 0.62, "colorize_span": 0.55,
                   "twist_chance": 4, "generate": True}
 DEFAULT_SHUFFLE = {"enabled": True, "note": 60, "skip_note": 61, "clips": "clips", "art": "art",
                    "image_bars": 16, "max_clip_bars": 16, "skip_fade_beats": 1.0}
@@ -303,6 +304,7 @@ class Item:
     # mirrored left to right, never turned (faces); False: always as it is
     mirror: bool = True  # follows the color mirroring; text scenes keep their true CGA colors by default
     skip_pulse_chance: int | None = None  # this piece's own beat drop rate; None: the show's setting
+    colorize: bool | None = None  # color a black and white piece by lightness; None: automatic
 
 
 @dataclass
@@ -445,7 +447,8 @@ def load_show(path):
                                "cover" if kind in FRACTAL_KINDS else fit, params,
                                _twist(it.get("twist", kind not in TEXT_KINDS), prog, note, warnings),
                                bool(it.get("mirror", kind not in TEXT_KINDS)),
-                               _skip(it, kind))
+                               _skip(it, kind),
+                               it.get("colorize"))
         if prog in songs:
             warnings.append(f"program {prog} defined twice, last one wins")
         songs[prog] = Song(prog, s.get("name", f"program {prog}"), items)

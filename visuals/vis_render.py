@@ -30,7 +30,7 @@ from vis_core import (FRACTAL_KINDS, GENERATED_KINDS, PALETTES, TEXT_KINDS, Item
                       beat_pulse, decay, dive_zoom, generated_item, julia_c,
                       layer_matrix, load_show, one_in, pick_twist, roll_pulse)
 from vis_color import OKHSL_GLSL
-from vis_media import ArraySource, ClipPool, ClipSource, ImageSource
+from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, is_colorless
 from vis_shuffle import Shuffle
 from vis_text import TextScreen, make_feed
 
@@ -52,6 +52,8 @@ uniform float gain_cur, gain_prev, xfade, zoom, hue, kaleido, feedback;
 uniform float rgb_split, brightness, drift, time;
 uniform float mirror_amount, mirror_angle;
 uniform float mirror_cur, mirror_prev;   // 1 = this layer follows the color mirroring
+uniform float colorize_cur, colorize_prev;  // 1 = color this layer by lightness (black and white art)
+uniform float col_hue, col_span, col_sat;
 in vec2 uv;
 out vec4 frag;
 //OKHSL
@@ -76,6 +78,18 @@ vec3 hue_rotate(vec3 c, float h) {
     return to_rgb * yiq;
 }
 
+// a black and white picture gets color from its own lightness: each pixel keeps its exact okhsl
+// lightness and takes a hue from how light it is, so shadows and highlights differ and the
+// mirroring has color to turn
+vec3 colorize(vec3 c) {
+    vec3 lin = vec3(srgb_to_lin(clamp(c.r, 0.0, 1.0)), srgb_to_lin(clamp(c.g, 0.0, 1.0)),
+                    srgb_to_lin(clamp(c.b, 0.0, 1.0)));
+    float l = ok_toe(lin_to_oklab(lin).x);
+    if (l <= 0.002) return vec3(0.0);
+    if (l >= 0.998) return vec3(1.0);
+    return okhsl_to_srgb(vec3(fract(col_hue + l * col_span), col_sat, l));
+}
+
 vec3 layer(sampler2D t, mat2 fit, vec2 p, float split) {
     vec2 q = fit * (p - 0.5) + 0.5;
     vec2 o = fit * vec2(split, 0.0);
@@ -90,6 +104,8 @@ void main() {
     float s = rgb_split * 0.012;
     vec3 a = layer(tex_cur, fit_cur, p, s) * gain_cur;
     vec3 b = layer(tex_prev, fit_prev, p, s) * gain_prev;
+    if (colorize_cur > 0.5) a = colorize(a);
+    if (colorize_prev > 0.5) b = colorize(b);
     if (mirror_amount > 0.0) {
         if (mirror_cur > 0.5) a = mix(a, color_mirror(a, mirror_angle), mirror_amount);
         if (mirror_prev > 0.5 && xfade < 1.0) b = mix(b, color_mirror(b, mirror_angle), mirror_amount);
@@ -183,6 +199,7 @@ class Layer:
         self.mode = item.fit if item else mode
         self.turns, self.mirrored = 0, False
         self.follows_mirror = item.mirror if item else True
+        self.colorize = False  # decided by the show when the layer is made (see Show.decide_colorize)
         f = source.frame
         h, w = f.shape[:2]
         self.size = (w, h)
@@ -218,6 +235,7 @@ class FractalLayer(Layer):
         self.mode = "cover"
         self.turns, self.mirrored = 0, False
         self.follows_mirror = item.mirror
+        self.colorize = False
         s = item.params["resolution"]
         self.size = (max(64, round(app.W * s)), max(36, round(app.H * s)))
         self.tex = app.ctx.texture(self.size, 4)
@@ -271,6 +289,7 @@ class TextLayer(Layer):
         self.mode = item.fit
         self.turns, self.mirrored = 0, False
         self.follows_mirror = item.mirror
+        self.colorize = False
         self.feed = make_feed(item.kind, app.conn.name.split(":")[0] if app.conn.name else "MIDI")
         self.seq, _ = app.state.log_since(10 ** 18)        # start from now, not old history
         self.size = TextLayer.screen.size
@@ -380,6 +399,7 @@ class Show:
         self.fallback = self.black
         if o["fallback"] and o["fallback"].exists():
             self.fallback = Layer(self.ctx, ImageSource(o["fallback"]), mode=o["fit"])
+            self.decide_colorize(self.fallback, None)
         elif o["generate"]:
             self.fallback = FractalLayer(self, generated_item("julia"))  # no image: the Julia set
         self.gen_next = 0
@@ -450,6 +470,7 @@ class Show:
         except Exception as e:
             print(f"trigger failed for note {item.note}: {e}", file=sys.stderr)
             return
+        self.decide_colorize(layer, item)
         if item is not None and item.twist:
             layer.turns, layer.mirrored = pick_twist(self.rng, int(self.show.output["twist_chance"]), item.twist)
         if self.prev is not None:
@@ -457,6 +478,20 @@ class Show:
         self.prev, self.cur = self.cur, layer
         self.xfade_t0 = now
         self.fade_len = float(self.show.output["crossfade"]) if fade is None else fade
+
+    def decide_colorize(self, layer, item):
+        """Black and white pictures and clips get colored by lightness: the piece's own colorize
+        setting if it has one, otherwise automatically when it has almost no color of its own.
+        Pieces kept in true colors (mirror = false) are left alone unless they ask for it."""
+        if isinstance(layer, (FractalLayer, TextLayer)) or getattr(layer, "src", None) is None:
+            layer.colorize = False
+            return
+        if item is not None and item.colorize is not None:
+            layer.colorize = bool(item.colorize)
+        elif not self.show.output["colorize"] or (item is not None and not item.mirror):
+            layer.colorize = False
+        else:
+            layer.colorize = is_colorless(layer.src.frame)
 
     def handle(self, ev, now):
         kind = ev[0]
@@ -615,6 +650,11 @@ class Show:
         set_u(p, "mirror_amount", self.cc("mirror"))
         set_u(p, "mirror_cur", 1.0 if a.follows_mirror else 0.0)
         set_u(p, "mirror_prev", 1.0 if b.follows_mirror else 0.0)
+        set_u(p, "colorize_cur", 1.0 if a.colorize else 0.0)
+        set_u(p, "colorize_prev", 1.0 if b.colorize else 0.0)
+        set_u(p, "col_hue", float(o["colorize_hue"]))
+        set_u(p, "col_span", float(o["colorize_span"]))
+        set_u(p, "col_sat", float(o["colorize_saturation"]))
         set_u(p, "mirror_angle", (travel + self.cc("true_angle")) % 1.0)
         set_u(p, "kaleido", 0.0 if k < 0.05 else 2.0 + round(k * 10))
         set_u(p, "feedback", self.cc("feedback"))
