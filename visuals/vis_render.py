@@ -540,7 +540,10 @@ class Show:
         kick, _snare, hat = self.state.hits()
 
         # every so often a beat lands a bigger punch with a longer release
+        # pulses come in three sizes, relative to a subtle normal one: medium now and then (1 in 8,
+        # twice normal), big rarely (1 in 32, six times normal); and some kicks give none at all
         chance, size = int(o["big_pulse_chance"]), float(o["big_pulse_size"])
+        med_chance, med_size = int(o["medium_pulse_chance"]), float(o["medium_pulse_size"])
         # and now and then a kick gives no pulse at all; a piece can have its own rate (fractals: 1 in 10)
         showing = self.cur if self.cur is not None else self.fallback
         own = getattr(getattr(showing, "item", None), "skip_pulse_chance", None)
@@ -548,18 +551,20 @@ class Show:
         if o["pulse_source"] == "beat":
             beats = self.state.beats(now, offset_s)
             if int(beats) != self.last_beat:
-                self.last_beat, self.kind_of_pulse = int(beats), roll_pulse(self.rng, chance, skip)
+                self.last_beat, self.kind_of_pulse = int(beats), roll_pulse(self.rng, chance, skip, med_chance)
             big = self.kind_of_pulse == "big"
             pulse = beat_pulse(beats, 3.0 if big else 6.0) if self.state.running else 0.0
         else:  # kick driven: offset can only delay, so only negative values apply
             if kick.t != self.last_kick_t:
-                self.last_kick_t, self.kind_of_pulse = kick.t, roll_pulse(self.rng, chance, skip)
+                self.last_kick_t, self.kind_of_pulse = kick.t, roll_pulse(self.rng, chance, skip, med_chance)
             big = self.kind_of_pulse == "big"
             pulse = decay(now + min(0.0, offset_s), kick, 0.25 if big else 0.12)
         if self.kind_of_pulse == "skip":
             pulse = 0.0
         elif self.kind_of_pulse == "big":
             pulse *= size
+        elif self.kind_of_pulse == "medium":
+            pulse *= med_size
 
 
         idle = self.state.idle_for(now)
@@ -595,7 +600,7 @@ class Show:
         set_u(p, "gain_prev", b.gain)
         set_u(p, "xfade", xf)
         base = 1.0 + 0.08 * drift if a.mode == "cover" else 1.0  # cover needs a margin so drift never shows an edge
-        set_u(p, "zoom", base * (1.0 + pulse * self.cc("zoom") * 0.15))
+        set_u(p, "zoom", base * (1.0 + pulse * self.cc("zoom") * 0.075))  # normal pulse: subtle
         set_u(p, "hue", self.cc("hue"))
         # color mirroring: the true hue pair travels once round every mirror_bars (0 = hold still,
         # so the true_angle knob alone aims it)

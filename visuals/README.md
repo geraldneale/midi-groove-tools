@@ -37,7 +37,7 @@ On the visual channel (default 16):
 * **Color mirroring** (CC 10 amount, CC 11 true angle) is Bram Cohen's okhsl mirror from his color_cycling code, run on every pixel of everything on screen. Two opposite hues stay true, the ones 90 degrees from them swap, and the true pair travels round the color wheel once every `mirror_bars`, locked to tempo. Lightness never changes, so pictures keep their shape. With `mirror_bars = 0` it holds still and CC 11 aims the true hues on cue. The math is in vis_color.py, with a plain Python version the tests check the GPU against.
 * **Program change** switches song.
 
-Drum channel (default 10): kick punches the zoom (about 1 kick in 32 lands a bigger punch: `big_pulse_chance`, `big_pulse_size`; about 1 in 20 gives no punch at all, like a dropped beat: `skip_pulse_chance`, with the Mandelbrot and Julia at 1 in 10, and any item can set its own `skip_pulse_chance`; all in `[output]`, 0 turns one off), hats add shimmer.
+Drum channel (default 10): kick gives a subtle zoom pulse; about 1 kick in 8 pulses twice as much (`medium_pulse_chance`, `medium_pulse_size`) and about 1 in 32 six times as much (`big_pulse_chance`, `big_pulse_size`); about 1 in 20 gives no punch at all, like a dropped beat: `skip_pulse_chance`, with the Mandelbrot and Julia at 1 in 10, and any item can set its own `skip_pulse_chance`; all in `[output]`, 0 turns one off), hats add shimmer.
 
 MIDI clock gives the tempo, used for clip tempo stretch and for `pulse_source = "beat"`.
 

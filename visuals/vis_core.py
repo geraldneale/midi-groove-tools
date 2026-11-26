@@ -187,12 +187,14 @@ def one_in(rng, n):
     return n > 0 and rng.random() < 1.0 / n
 
 
-def roll_pulse(rng, big_chance, skip_chance):
-    """For each kick: "big" now and then, "skip" (no pulse at all) now and then, else "normal".
-    A big one is never also skipped."""
+def roll_pulse(rng, big_chance, skip_chance, medium_chance=0):
+    """For each kick: "big" now and then, "skip" (no pulse at all) now and then, "medium" a bit
+    more often, else "normal" (a subtle pulse). A big one is never also skipped."""
     if one_in(rng, big_chance):
         return "big"
-    return "skip" if one_in(rng, skip_chance) else "normal"
+    if one_in(rng, skip_chance):
+        return "skip"
+    return "medium" if one_in(rng, medium_chance) else "normal"
 
 
 def pick_twist(rng, chance, allowed=True):
@@ -228,7 +230,8 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "fullscreen": False, "display": 0, "fps": 60, "offset_ms": 0,
                   "pulse_source": "kick", "fallback": "",
                   "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain",
-                  "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0, "skip_pulse_chance": 20,
+                  "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 6.0, "skip_pulse_chance": 20,
+                  "medium_pulse_chance": 8, "medium_pulse_size": 2.0,
                   "twist_chance": 4, "generate": True}
 DEFAULT_SHUFFLE = {"enabled": True, "note": 60, "skip_note": 61, "clips": "clips", "art": "art",
                    "image_bars": 16, "max_clip_bars": 16, "skip_fade_beats": 1.0}

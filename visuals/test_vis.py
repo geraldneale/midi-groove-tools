@@ -317,6 +317,12 @@ class TestSurprises(unittest.TestCase):
         self.assertAlmostEqual(c["skip"] / 40000, (31 / 32) / 20, delta=0.004)   # big ones are never skipped
         self.assertEqual(set(c), {"big", "skip", "normal"})
         self.assertEqual({roll_pulse(rng, 0, 0) for _ in range(50)}, {"normal"})  # 0 turns both off
+        c3 = Counter(roll_pulse(rng, 32, 20, 8) for _ in range(40000))
+        self.assertAlmostEqual(c3["medium"] / 40000, (31 / 32) * (19 / 20) / 8, delta=0.006)
+        self.assertAlmostEqual(c3["big"] / 40000, 1 / 32, delta=0.004)
+        import vis_core
+        o = vis_core.DEFAULT_OUTPUT                                         # same peaks as before, gentler normal
+        self.assertEqual((o["medium_pulse_size"], o["big_pulse_size"]), (2.0, 6.0))
 
     def test_pick_twist(self):
         import random
