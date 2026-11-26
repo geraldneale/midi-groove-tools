@@ -17,16 +17,17 @@ except ImportError:  # clips are optional
 MAX_IMAGE_SIDE = 4096  # keeps big GIMP exports inside GPU texture limits
 
 
-def is_colorless(frame, limit=24):
-    """True for black and white, sepia-faint or washed out pictures: 90% of pixels have almost
-    no difference between their strongest and weakest color channel (out of 255)."""
+def is_colorless(frame, limit=12, share=98):
+    """True only for black and white pictures: 98% of pixels are essentially gray (their
+    strongest and weakest color channels within 12 of 255). Faint sepia or muted art keeps
+    its own colors; a small colored signature doesn't stop a black and white piece counting."""
     f = np.asarray(frame)
     if f.ndim != 3 or f.size == 0:
         return False
     step = max(1, int((f.shape[0] * f.shape[1] / 40000) ** 0.5))  # a sample is plenty
     s = f[::step, ::step].astype(np.int16)
     chroma = s.max(axis=2) - s.min(axis=2)
-    return float(np.percentile(chroma, 90)) < limit
+    return float(np.percentile(chroma, share)) <= limit
 
 
 class ArraySource:

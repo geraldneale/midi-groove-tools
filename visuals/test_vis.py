@@ -753,7 +753,9 @@ class TestMedia(unittest.TestCase):
         gray = np.tile(np.linspace(0, 255, 200).astype(np.uint8)[None, :, None], (100, 1, 3))
         self.assertTrue(is_colorless(gray))                              # black and white
         sepia = gray.astype(int) + np.array([12, 4, -8])
-        self.assertTrue(is_colorless(np.clip(sepia, 0, 255).astype(np.uint8)))  # faint sepia
+        self.assertFalse(is_colorless(np.clip(sepia, 0, 255).astype(np.uint8)))  # faint sepia keeps its colors
+        scan = gray.astype(int) + np.array([3, 1, -2])                    # a slightly warm black and white scan
+        self.assertTrue(is_colorless(np.clip(scan, 0, 255).astype(np.uint8)))
         colorful = np.zeros((100, 200, 3), np.uint8)
         colorful[:, :100] = (220, 40, 40)
         colorful[:, 100:] = (40, 80, 220)
