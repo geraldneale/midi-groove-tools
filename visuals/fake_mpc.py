@@ -6,6 +6,7 @@ channel), a new scene note every few bars and a slow hue sweep (visual channel).
 
     python3 fake_mpc.py --bpm 124 --bars 4 --notes 36 37 40 41
     python3 fake_mpc.py --bars 16 --notes 39 40:32 41:32 44    # fractals get 32 bars
+    python3 fake_mpc.py --bars 16 --notes 39 60:32 40:32       # 32 bars of shuffle (clips and art)
     python3 vis_render.py show.toml     # with port = "FakeMPC" in [midi]
 
 A note can carry its own length in bars after a colon; others use --bars.
@@ -41,6 +42,8 @@ def main():
     ap.add_argument("--bars", type=int, default=4, help="bars per scene")
     ap.add_argument("--notes", nargs="+", default=["36", "37", "38", "39", "40", "41"],
                     help="scene notes in order; note:bars gives one its own length, e.g. 40:32")
+    ap.add_argument("--shuffle-note", type=int, default=60,
+                    help="the shuffle note; its velocity carries the gap length in bars, like on the MPC")
     ap.add_argument("--minutes", type=float, default=500.0,
                     help="stop by itself after this long (default 500; 0 runs until Ctrl+C)")
     ap.add_argument("--drum-ch", type=int, default=10)
@@ -93,7 +96,8 @@ def main():
                         step = (step + 1) % len(plan)
                         scene_note, bars = plan[step]
                         next_change = beat + 4 * bars
-                        out.send_message([on_v, scene_note, 110])
+                        vel = min(127, bars) if scene_note == a.shuffle_note else 110  # shuffle: velocity = bars
+                        out.send_message([on_v, scene_note, vel])
                         print(f"bar {beat // 4 + 1}: scene note {scene_note} for {bars} bars")
                 for n in hits:
                     out.send_message([on_d, n, 120 if n != 42 else 70])

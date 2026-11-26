@@ -19,6 +19,7 @@ from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, cv2
 import vis_color as vc
 import clip_grab as cg
 import vis_text as vt
+import vis_shuffle as vs
 from vis_core import generated_item, GENERATED_KINDS
 
 
@@ -500,6 +501,156 @@ class TestFakeMPC(unittest.TestCase):
         for bad in (["40:0"], ["200"], ["x"]):
             with self.assertRaises(ValueError):
                 fake_mpc.scene_plan(bad, 16)
+
+
+class TestShuffle(unittest.TestCase):
+    """At 120 BPM a bar is 2 seconds, so a clip's seconds / 2 = its bars."""
+
+    def make(self, clips, **kw):
+        import random
+        self.tmp = tempfile.TemporaryDirectory()
+        d = Path(self.tmp.name)
+        (d / "clips").mkdir()
+        for name in clips:
+            (d / "clips" / name).write_bytes(b"x")
+        (d / "clips" / "notes.txt").write_text("not a clip")
+        secs = dict(clips)
+        sh = vs.Shuffle(d / "clips", d / "shuffle.db", rng=random.Random(1),
+                        seconds_of=lambda p: secs[p.name], **kw)
+        self.c = lambda n: f"clips/{n}"
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(sh.close)
+        return sh, d
+
+    def set_counts(self, sh, **counts):
+        sh.pool()
+        for name, c in counts.items():
+            sh.db.execute("UPDATE plays SET count = ? WHERE name = ?", (c, "clips/" + name.replace("_", ".")))
+        sh.db.commit()
+
+    def test_bars_for(self):
+        self.assertEqual(vs.bars_for(7.3, 120, 8), 4)          # 3.65 bars rounds to 4
+        self.assertEqual(vs.bars_for(0.4, 120, 8), 1)          # never under a bar
+        self.assertEqual(vs.bars_for(300, 120, 8), 8)          # long YouTube segments capped
+
+    def test_new_clips_start_below_the_usual_count(self):
+        sh, d = self.make({"a.mp4": 4, "b.mp4": 4})
+        self.assertEqual(set(sh.pool()), {"clips/a.mp4", "clips/b.mp4"})  # notes.txt isn't a clip
+        self.set_counts(sh, a_mp4=10, b_mp4=10)
+        (d / "clips" / "c.mp4").write_bytes(b"x")
+        sh.seconds_of = lambda p: 4
+        sh.pool()
+        self.assertEqual(sh.count("clips/c.mp4"), 10 - vs.MODE_OFFSET)  # SoundTrack's MODE_OFFSET
+
+    def test_least_shown_first_and_fills_the_gap(self):
+        sh, _ = self.make({"long.mp4": 12, "short.mp4": 6, "worn.mp4": 4})
+        self.set_counts(sh, long_mp4=1, short_mp4=1, worn_mp4=9)
+        first = sh.start(0, 4, 120)                             # a 4 bar gap
+        self.assertEqual((first.name, first.bars), ("clips/short.mp4", 3))  # least shown that fits: 3 of 4 bars
+        self.assertEqual(first.end, 12)
+        self.assertIsNone(sh.update(11.9, 120))
+        second = sh.update(12, 120)
+        self.assertEqual((second.name, second.bars, second.start, second.end), ("clips/long.mp4", 1, 12, 16))  # cut to fit
+        self.assertEqual(sh.count("clips/short.mp4"), 2)              # the finished clip counts as shown
+        self.assertIsNone(sh.update(16, 120))                   # gap used up: last clip carries on
+        sh.stop()                                               # scene note
+        self.assertEqual(sh.count("clips/long.mp4"), 2)
+        self.assertFalse(sh.active)
+
+    def test_no_length_chains_until_the_scene_note(self):
+        sh, _ = self.make({"a.mp4": 4, "b.mp4": 4})
+        p = sh.start(0, 0, 120)
+        seen = [p.name]
+        for beat in range(1, 81):                                # 20 bars
+            nxt = sh.update(beat, 120)
+            if nxt:
+                seen.append(nxt.name)
+                self.assertEqual(nxt.start % 4, 0)              # every change on a bar line
+        self.assertGreaterEqual(len(seen), 10)                  # 2 bars each, 20 bars
+        self.assertTrue(all(a != b for a, b in zip(seen, seen[1:])))  # never the same clip twice in a row
+
+    def test_skip_doesnt_count_and_lands_on_a_bar_line(self):
+        sh, _ = self.make({"a.mp4": 8, "b.mp4": 8, "c.mp4": 8})
+        first = sh.start(0, 16, 120)
+        before = sh.count(first.name)
+        nxt = sh.skip(5, 120)                                   # pressed Next in bar 2
+        self.assertNotEqual(nxt.name, first.name)
+        self.assertEqual(sh.count(first.name), before)          # skipped: not counted
+        self.assertEqual(nxt.start, 5)
+        self.assertEqual((nxt.end - 8) % 4, 0)                  # hands over on a bar line
+        late = sh.skip(7.5, 120)                                # half a beat before a bar line
+        self.assertGreaterEqual(late.end - 7.5, 2)              # never a sliver of a clip
+
+    def test_never_again_sticks(self):
+        sh, d = self.make({"a.mp4": 4, "b.mp4": 4})
+        first = sh.start(0, 8, 120)
+        nxt = sh.never_again(1, 120)
+        self.assertNotEqual(nxt.name, first.name)
+        self.assertNotIn(first.name, sh.pool())
+        import random
+        again = vs.Shuffle(d / "clips", d / "shuffle.db", rng=random.Random(2), seconds_of=lambda p: 4)
+        self.addCleanup(again.close)
+        self.assertNotIn(first.name, again.pool())              # remembered for the next show
+
+    def test_counts_carry_over(self):
+        sh, d = self.make({"a.mp4": 4, "b.mp4": 4})
+        p = sh.start(0, 2, 120)
+        sh.stop()
+        import random
+        again = vs.Shuffle(d / "clips", d / "shuffle.db", rng=random.Random(3), seconds_of=lambda p: 4)
+        self.addCleanup(again.close)
+        self.assertNotEqual(again.start(0, 2, 120).name, p.name)  # the other one is now least shown
+
+    def test_a_first_batch_starts_level(self):
+        sh, _ = self.make({"a.mp4": 4, "b.mp4": 4, "c.mp4": 4})
+        sh.pool()
+        self.assertEqual({sh.count(self.c(n)) for n in ("a.mp4", "b.mp4", "c.mp4")}, {-vs.MODE_OFFSET})
+
+    def test_art_joins_the_shuffle_and_new_pieces_come_up_first(self):
+        import random
+        sh, d = self.make({"a.mp4": 4})
+        art = d / "art"
+        (art / "misc").mkdir(parents=True)
+        for n in ("old1.png", "old2.jpg", "fallback.png"):
+            (art / n).write_bytes(b"x")
+        (art / "misc" / "parked.png").write_bytes(b"x")         # moved aside: not shown
+        sh2 = vs.Shuffle(d / "clips", d / "shuffle.db", art_folder=art, skip_files=[art / "fallback.png"],
+                         rng=random.Random(4), seconds_of=lambda p: 4)
+        self.addCleanup(sh2.close)
+        self.assertEqual(set(sh2.pool()), {"clips/a.mp4", "art/old1.png", "art/old2.jpg"})
+        for n in sh2.pool():
+            sh2.db.execute("UPDATE plays SET count = 5 WHERE name = ?", (n,))
+        sh2.db.commit()
+        (art / "brand_new.gif").write_bytes(b"x")              # just downloaded
+        p = sh2.start(0, 16, 120)
+        self.assertEqual((p.name, p.kind, p.bars), ("art/brand_new.gif", "image", 4))  # new: shown first
+        self.assertEqual(sh2.count("art/brand_new.gif"), 5 - vs.MODE_OFFSET)
+        shown = [p.name]
+        for beat in range(1, 200):
+            q = sh2.update(beat, 120)
+            if q:
+                shown.append(q.name)
+        sh2.stop()
+        self.assertGreater(shown.count("art/brand_new.gif"), 1)   # keeps coming up while it catches up
+
+    def test_shuffle_settings(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "s.toml").write_text('[shuffle]\nnote = 200\nimage_bars = 2\n'
+                                            '[[song]]\n  [[song.item]]\n  note = 61\n  type = "julia"\n')
+            show = load_show(Path(d) / "s.toml")
+        sc = show.shuffle
+        self.assertEqual((sc["note"], sc["skip_note"], sc["image_bars"]), (60, 61, 2))  # bad note falls back
+        self.assertEqual(sc["clips"], Path(d) / "clips")
+        self.assertEqual(sc["art"], Path(d) / "art")
+        joined = " ".join(show.warnings)
+        self.assertIn("shuffle note must be 0 to 127", joined)
+        self.assertIn("note 61 is the shuffle skip note", joined)
+
+    def test_empty_folder(self):
+        sh, _ = self.make({})
+        self.assertIsNone(sh.start(0, 8, 120))
+        self.assertIsNone(sh.update(100, 120))
+        self.assertIsNone(sh.skip(1, 120))
 
 
 class TestShowFile(unittest.TestCase):

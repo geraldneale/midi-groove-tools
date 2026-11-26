@@ -230,6 +230,8 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain",
                   "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0, "skip_pulse_chance": 20,
                   "twist_chance": 4, "generate": True}
+DEFAULT_SHUFFLE = {"enabled": True, "note": 60, "skip_note": 61, "clips": "clips", "art": "art",
+                   "image_bars": 4, "max_clip_bars": 8, "skip_fade_beats": 1.0}
 DEFAULT_CC = {"zoom": 1, "hue": 2, "kaleido": 3, "feedback": 4, "rgb_split": 5,
               "brightness": 7, "drift": 8, "shimmer": 9,
               "mirror": 10, "true_angle": 11}
@@ -316,6 +318,7 @@ class Show:
     songs: dict[int, Song]
     base: Path
     warnings: list = field(default_factory=list)
+    shuffle: dict = field(default_factory=dict)
 
 
 def _resolve(base, p):
@@ -443,4 +446,16 @@ def load_show(path):
         if prog in songs:
             warnings.append(f"program {prog} defined twice, last one wins")
         songs[prog] = Song(prog, s.get("name", f"program {prog}"), items)
-    return Show(midi, output, cc_map, cc_defaults, songs, base, warnings)
+    shuffle = {**DEFAULT_SHUFFLE, **raw.get("shuffle", {})}
+    for key in ("note", "skip_note"):
+        if not 0 <= int(shuffle[key]) <= 127:
+            warnings.append(f"shuffle {key} must be 0 to 127; using {DEFAULT_SHUFFLE[key]}")
+            shuffle[key] = DEFAULT_SHUFFLE[key]
+    shuffle["clips"], shuffle["art"] = _resolve(base, shuffle["clips"]), _resolve(base, shuffle["art"])
+    if shuffle["enabled"]:
+        for s in songs.values():
+            for key in ("note", "skip_note"):
+                if int(shuffle[key]) in s.items:
+                    warnings.append(f"song {s.program}: note {shuffle[key]} is the shuffle {key.replace('_', ' ')}; "
+                                    f"its item is never shown")
+    return Show(midi, output, cc_map, cc_defaults, songs, base, warnings, shuffle)

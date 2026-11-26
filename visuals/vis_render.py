@@ -10,11 +10,12 @@ Usage:
     python3 vis_render.py --list-ports
 
 Keys: Esc quit, 1-9 trigger the current song's items in note order,
-Space fake kick.
+Space fake kick, N next shuffle piece, X drop the shuffle piece for good.
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import math
 import random
 import sys
@@ -25,11 +26,12 @@ import numpy as np
 import pygame
 import rtmidi
 
-from vis_core import (FRACTAL_KINDS, GENERATED_KINDS, PALETTES, TEXT_KINDS, MidiState,
+from vis_core import (FRACTAL_KINDS, GENERATED_KINDS, PALETTES, TEXT_KINDS, Item, MidiState,
                       beat_pulse, decay, dive_zoom, generated_item, julia_c,
                       layer_matrix, load_show, one_in, pick_twist, roll_pulse)
 from vis_color import OKHSL_GLSL
 from vis_media import ArraySource, ClipPool, ClipSource, ImageSource
+from vis_shuffle import Shuffle
 from vis_text import TextScreen, make_feed
 
 VERT = """
@@ -388,6 +390,16 @@ class Show:
         self.song = None
         self.select_song(0)
         self.mirror_beats = 0.0
+        self.beat_clock = 0.0  # beats since start, from the band's tempo; the shuffle counts bars on it
+        self.fade_len = float(o["crossfade"])
+        sc = show.shuffle
+        self.shuffle = None
+        if sc.get("enabled"):
+            skip = [o["fallback"]] if o["fallback"] else []
+            self.shuffle = Shuffle(sc["clips"], show.base / "shuffle.db", art_folder=sc["art"], skip_files=skip,
+                                   image_bars=int(sc["image_bars"]), max_clip_bars=int(sc["max_clip_bars"]))
+            print(f"shuffle: note {sc['note']} fills a gap (velocity = bars), note {sc['skip_note']} or N skips, "
+                  f"X drops a piece for good; {len(self.shuffle.pool())} pieces in {sc['clips'].name} and {sc['art'].name}")
         self.rng = random.Random()
         self.last_kick_t, self.last_beat, self.kind_of_pulse = -1e9, None, "normal"
 
@@ -403,25 +415,29 @@ class Show:
         for item in song.items.values():  # preload stills so triggers don't hit the disk
             if item.kind == "image" and item.path and item.path.exists():
                 try:
-                    self.image_cache[item.note] = ImageSource(item.path).frame
+                    self.image_cache[str(item.path)] = ImageSource(item.path).frame
                 except Exception as e:
                     print(f"cannot load {item.path}: {e}", file=sys.stderr)
             elif item.kind == "clip" and item.path and item.path.exists():
-                self.clip_pool.prepare(item.note, self._clip_factory(item))  # opens in the background
+                self.clip_pool.prepare(self._clip_key(item), self._clip_factory(item))  # opens in the background
         print(f"song {program}: {song.name} ({len(song.items)} items)")
 
     def make_source(self, item):
         if item.kind == "image":
-            if item.note in self.image_cache:
-                return ArraySource.from_frame(self.image_cache[item.note])
+            if str(item.path) in self.image_cache:
+                return ArraySource.from_frame(self.image_cache[str(item.path)])
             return ImageSource(item.path)
-        return self.clip_pool.take(item.note, self._clip_factory(item))
+        return self.clip_pool.take(self._clip_key(item), self._clip_factory(item))
+
+    @staticmethod
+    def _clip_key(item):
+        return (str(item.path), item.start, item.end)
 
     @staticmethod
     def _clip_factory(item):
         return lambda: ClipSource(item.path, item.start, item.end)
 
-    def trigger(self, item, vel, now):
+    def trigger(self, item, vel, now, fade=None):
         gain = 1.0 if item is None else item.gain * (0.25 + 0.75 * vel)
         try:
             if item is not None and item.kind in FRACTAL_KINDS:
@@ -440,9 +456,23 @@ class Show:
             self.prev.release()
         self.prev, self.cur = self.cur, layer
         self.xfade_t0 = now
+        self.fade_len = float(self.show.output["crossfade"]) if fade is None else fade
 
     def handle(self, ev, now):
         kind = ev[0]
+        sh, sc = self.shuffle, self.show.shuffle
+        if kind == "note_on" and sh is not None and ev[1] == int(sc["note"]):
+            pick = sh.start(self.beat_clock, round(ev[2] * 127), self.state.bpm)  # velocity = bars to fill
+            if pick:
+                self.show_pick(pick, now)
+            else:
+                print(f"shuffle: nothing to show yet; put clips in {sc['clips'].name}/ or pictures in {sc['art'].name}/")
+            return
+        if kind == "note_on" and sh is not None and ev[1] == int(sc["skip_note"]):
+            self.shuffle_next(now)
+            return
+        if kind in ("note_on", "program") and sh is not None and sh.active:
+            sh.stop()  # a scene took over; the piece on screen counts as shown
         if kind == "note_on":
             item = self.song.items.get(ev[1]) if self.song else None
             missing = item is None or (item.path is not None and not item.path.exists())
@@ -457,6 +487,43 @@ class Show:
             self.select_song(ev[1])
         elif kind in ("start", "stop", "continue", "locate"):
             print("transport:", *ev)
+
+    # ---- the shuffle (after SoundTrack): fills between fixed scenes ----
+    def item_for(self, pick):
+        """A shuffled piece keeps any settings it has in show.toml (faces, true colors and so on)."""
+        target = pick.path.resolve()
+        for song in self.show.songs.values():
+            for it in song.items.values():
+                if it.path is not None and it.path.resolve() == target:
+                    return dataclasses.replace(it, note=int(self.show.shuffle["note"]), hold=False, start=0.0, end=None)
+        return Item(int(self.show.shuffle["note"]), pick.kind, pick.path, fit=self.show.output["fit"])
+
+    def show_pick(self, pick, now, fade=None):
+        self.trigger(self.item_for(pick), 1.0, now, fade)
+        print(f"shuffle: {pick.name} for {pick.bars} bars")
+        nxt = self.shuffle.upcoming
+        if nxt is not None and nxt.kind == "clip":  # open the next clip ahead of time
+            it = self.item_for(nxt)
+            self.clip_pool.prepare(self._clip_key(it), self._clip_factory(it))
+
+    def _skip_fade(self):
+        return float(self.show.shuffle["skip_fade_beats"]) * 60.0 / max(self.state.bpm, 1.0)
+
+    def shuffle_next(self, now):
+        if self.shuffle is None or not self.shuffle.active:
+            return
+        pick = self.shuffle.skip(self.beat_clock, self.state.bpm)
+        if pick:
+            self.show_pick(pick, now, self._skip_fade())
+
+    def shuffle_never_again(self, now):
+        if self.shuffle is None or not self.shuffle.active:
+            return
+        gone = self.shuffle.current.name
+        pick = self.shuffle.never_again(self.beat_clock, self.state.bpm)
+        print(f"shuffle: {gone} dropped for good (remove it from the never table in shuffle.db to bring it back)")
+        if pick:
+            self.show_pick(pick, now, self._skip_fade())
 
     def next_generated(self, note):
         kind = GENERATED_KINDS[self.gen_next % len(GENERATED_KINDS)]
@@ -502,7 +569,7 @@ class Show:
             if a is not self.black:
                 a.update(dt, 1.0)  # a live fallback (the Julia set) keeps moving
         else:
-            xf = min(1.0, (now - self.xfade_t0) / max(1e-3, float(o["crossfade"])))
+            xf = min(1.0, (now - self.xfade_t0) / max(1e-3, self.fade_len))
             if xf >= 1.0 and self.prev is not None:
                 self.prev.release()
                 self.prev = None
@@ -534,6 +601,11 @@ class Show:
         # so the true_angle knob alone aims it)
         bars = float(o["mirror_bars"])
         self.mirror_beats += dt * self.state.bpm / 60.0
+        self.beat_clock += dt * self.state.bpm / 60.0
+        if self.shuffle is not None and self.shuffle.active:
+            pick = self.shuffle.update(self.beat_clock, self.state.bpm)
+            if pick:
+                self.show_pick(pick, now)
         travel = self.mirror_beats / (bars * 4.0) if bars > 0 else 0.0
         set_u(p, "mirror_amount", self.cc("mirror"))
         set_u(p, "mirror_cur", 1.0 if a.follows_mirror else 0.0)
@@ -569,6 +641,10 @@ class Show:
     def keys(self, e, now):
         if e.key == pygame.K_SPACE:
             self.state.poke("kick")
+        elif e.key == pygame.K_n:
+            self.shuffle_next(now)
+        elif e.key == pygame.K_x:
+            self.shuffle_never_again(now)
         elif pygame.K_1 <= e.key <= pygame.K_9 and self.song:
             notes = sorted(self.song.items)
             i = e.key - pygame.K_1
@@ -623,6 +699,9 @@ def main():
         app.run()
     finally:
         app.clip_pool.shutdown()
+        if app.shuffle is not None:
+            app.shuffle.stop()
+            app.shuffle.close()
         pygame.quit()
 
 

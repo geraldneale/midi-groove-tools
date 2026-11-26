@@ -45,6 +45,19 @@ drift = 0.5
 shimmer = 0.3
 mirror = 1.0    # full color mirroring from the start
 
+# The shuffle fills gaps between fixed scenes, like SoundTrack: put a shuffle note on the
+# MPC's visual track with its velocity set to the gap's length in bars. It chains clips
+# from clips/ and pictures from art/ (anything dropped in either folder joins; subfolders
+# like art/misc don't), least shown first, new arrivals more often at first. Counts and
+# the never-again list are kept in shuffle.db next to this file. In the visuals window,
+# N skips the piece on screen and X drops it for good; the skip note does the same as N.
+[shuffle]
+note = 60
+skip_note = 61
+image_bars = 4          # how long a picture stays up
+max_clip_bars = 8       # longest a clip plays before the next piece
+skip_fade_beats = 1     # fade when skipping
+
 # One [[song]] per MPC program change number. Items map a note on the
 # visual channel to an image or a video clip. Velocity sets intensity.
 [[song]]
