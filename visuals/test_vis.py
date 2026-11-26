@@ -488,6 +488,11 @@ class TestTextScenes(unittest.TestCase):
 
 
 class TestFakeMPC(unittest.TestCase):
+    def test_stops_by_itself(self):
+        import fake_mpc
+        self.assertEqual(fake_mpc.stop_tick(500, 124), 500 * 124 * 24)   # clock ticks in 500 minutes
+        self.assertIsNone(fake_mpc.stop_tick(0, 124))                    # 0: until Ctrl+C
+
     def test_scene_plan(self):
         import fake_mpc
         self.assertEqual(fake_mpc.scene_plan(["39", "40:32", "41:24", "44"], 16),

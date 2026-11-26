@@ -48,7 +48,7 @@ In MPC MIDI settings, enable clock out to the USB port the iMac sees.
 
 Keys: 1 to 9 trigger items, Space fake kick, Esc quit.
 
-Scene length: every scene gets `--bars` bars; give a note its own length with a colon, e.g. `--notes 39 40:32 41:32 44` keeps the Mandelbrot (40) and Julia (41) up for 32 bars. At the gig, a scene lasts as long as its note on the MPC's visual track.
+Scene length: every scene gets `--bars` bars; give a note its own length with a colon, e.g. `--notes 39 40:32 41:32 44` keeps the Mandelbrot (40) and Julia (41) up for 32 bars. At the gig, a scene lasts as long as its note on the MPC's visual track. The fake MPC stops by itself after 500 minutes (`--minutes`, 0 = until Ctrl+C), so it can't be left running for days.
 
 ## Gig
 

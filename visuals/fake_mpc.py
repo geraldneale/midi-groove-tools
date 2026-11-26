@@ -9,11 +9,18 @@ channel), a new scene note every few bars and a slow hue sweep (visual channel).
     python3 vis_render.py show.toml     # with port = "FakeMPC" in [midi]
 
 A note can carry its own length in bars after a colon; others use --bars.
+It stops by itself after --minutes (default 500; 0 runs until Ctrl+C), so it can't be left
+running for days.
 """
 import argparse
 import time
 
 CLOCK, START, STOP = 0xF8, 0xFA, 0xFC
+
+
+def stop_tick(minutes, bpm):
+    """Clock tick to stop at after this many minutes, or None to run until Ctrl+C."""
+    return None if minutes <= 0 else int(minutes * bpm * 24)
 
 
 def scene_plan(notes, default_bars):
@@ -34,6 +41,8 @@ def main():
     ap.add_argument("--bars", type=int, default=4, help="bars per scene")
     ap.add_argument("--notes", nargs="+", default=["36", "37", "38", "39", "40", "41"],
                     help="scene notes in order; note:bars gives one its own length, e.g. 40:32")
+    ap.add_argument("--minutes", type=float, default=500.0,
+                    help="stop by itself after this long (default 500; 0 runs until Ctrl+C)")
     ap.add_argument("--drum-ch", type=int, default=10)
     ap.add_argument("--visual-ch", type=int, default=16)
     a = ap.parse_args()
@@ -55,11 +64,14 @@ def main():
     tick_s = 60.0 / (a.bpm * 24)
     pending = {}  # tick -> list of note offs
     scene_note, step, next_change = None, -1, 0
+    last_tick = stop_tick(a.minutes, a.bpm)
+    if last_tick:
+        print(f"stops by itself after {a.minutes:g} minutes (--minutes 0 to run until Ctrl+C)")
     out.send_message([START])
     t0 = time.perf_counter()
     tick = 0
     try:
-        while True:
+        while last_tick is None or tick < last_tick:
             delay = t0 + tick * tick_s - time.perf_counter()
             if delay > 0:
                 time.sleep(delay)
@@ -88,10 +100,13 @@ def main():
                     pending.setdefault(tick + 3, []).append([off_d, n, 0])
             tick += 1
     except KeyboardInterrupt:
-        out.send_message([STOP])
+        pass
+    else:
+        print(f"{a.minutes:g} minutes up: stopped")
+    finally:
+        out.send_message([STOP])  # a clean stop either way: time up or Ctrl+C
         if scene_note is not None:
             out.send_message([off_v, scene_note, 0])
-    finally:
         del out
 
 
