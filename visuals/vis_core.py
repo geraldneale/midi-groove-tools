@@ -228,7 +228,7 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "fullscreen": False, "display": 0, "fps": 60, "offset_ms": 0,
                   "pulse_source": "kick", "fallback": "",
                   "idle_seconds": 5.0, "crossfade": 0.25, "fit": "contain",
-                  "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0, "skip_pulse_chance": 10,
+                  "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0, "skip_pulse_chance": 20,
                   "twist_chance": 4, "generate": True}
 DEFAULT_CC = {"zoom": 1, "hue": 2, "kaleido": 3, "feedback": 4, "rgb_split": 5,
               "brightness": 7, "drift": 8, "shimmer": 9,
@@ -297,6 +297,7 @@ class Item:
     twist: bool | str = True  # True: may be mirrored or turned (see twist_chance); "mirror": only
     # mirrored left to right, never turned (faces); False: always as it is
     mirror: bool = True  # follows the color mirroring; text scenes keep their true CGA colors by default
+    skip_pulse_chance: int | None = None  # this piece's own beat drop rate; None: the show's setting
 
 
 @dataclass
@@ -329,11 +330,21 @@ def _twist(value, prog, note, warnings):
     return False
 
 
+FRACTAL_SKIP = 10  # fractals drop a beat more often than art (1 in 10 vs the show's 1 in 20)
+
+
+def _skip(it, kind):
+    if "skip_pulse_chance" in it:
+        return int(it["skip_pulse_chance"])
+    return FRACTAL_SKIP if kind in FRACTAL_KINDS else None
+
+
 def generated_item(kind, note=-1):
     """A scene made live (fractal or text) with default settings, e.g. to stand in for missing art."""
     params = _fractal_params(kind, {}, "-", note, []) if kind in FRACTAL_KINDS else {}
     return Item(note, kind, None, fit="cover" if kind in FRACTAL_KINDS else "contain",
-                params=params, twist=kind not in TEXT_KINDS, mirror=kind not in TEXT_KINDS)
+                params=params, twist=kind not in TEXT_KINDS, mirror=kind not in TEXT_KINDS,
+                skip_pulse_chance=FRACTAL_SKIP if kind in FRACTAL_KINDS else None)
 
 
 def _fractal_params(kind, it, prog, note, warnings):
@@ -427,7 +438,8 @@ def load_show(path):
                                bool(it.get("hold", False)), float(it.get("gain", 1.0)),
                                "cover" if kind in FRACTAL_KINDS else fit, params,
                                _twist(it.get("twist", kind not in TEXT_KINDS), prog, note, warnings),
-                               bool(it.get("mirror", kind not in TEXT_KINDS)))
+                               bool(it.get("mirror", kind not in TEXT_KINDS)),
+                               _skip(it, kind))
         if prog in songs:
             warnings.append(f"program {prog} defined twice, last one wins")
         songs[prog] = Song(prog, s.get("name", f"program {prog}"), items)

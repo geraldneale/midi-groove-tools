@@ -311,9 +311,9 @@ class TestSurprises(unittest.TestCase):
         import random
         from collections import Counter
         rng = random.Random(9)
-        c = Counter(roll_pulse(rng, 32, 10) for _ in range(40000))
+        c = Counter(roll_pulse(rng, 32, 20) for _ in range(40000))
         self.assertAlmostEqual(c["big"] / 40000, 1 / 32, delta=0.004)
-        self.assertAlmostEqual(c["skip"] / 40000, (31 / 32) / 10, delta=0.006)   # big ones are never skipped
+        self.assertAlmostEqual(c["skip"] / 40000, (31 / 32) / 20, delta=0.004)   # big ones are never skipped
         self.assertEqual(set(c), {"big", "skip", "normal"})
         self.assertEqual({roll_pulse(rng, 0, 0) for _ in range(50)}, {"normal"})  # 0 turns both off
 
@@ -370,6 +370,20 @@ class TestSurprises(unittest.TestCase):
         self.assertFalse(show.songs[0].items[4].twist)                 # unknown value: kept upright
         self.assertIn('twist must be true, false or "mirror"', " ".join(show.warnings))
         self.assertEqual((show.output["big_pulse_chance"], show.output["twist_chance"]), (32, 4))
+        self.assertEqual(show.output["skip_pulse_chance"], 20)
+        self.assertIsNone(show.songs[0].items[1].skip_pulse_chance)         # art follows the show
+
+    def test_fractals_drop_beats_more_often(self):
+        self.assertEqual(generated_item("mandelbrot").skip_pulse_chance, 10)
+        self.assertEqual(generated_item("julia").skip_pulse_chance, 10)
+        self.assertIsNone(generated_item("hex").skip_pulse_chance)
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "a.png").write_bytes(b"x")
+            (Path(d) / "s.toml").write_text('[[song]]\n  [[song.item]]\n  note = 40\n  type = "mandelbrot"\n'
+                                            '  [[song.item]]\n  note = 44\n  path = "a.png"\n  skip_pulse_chance = 0\n')
+            items = load_show(Path(d) / "s.toml").songs[0].items
+        self.assertEqual(items[40].skip_pulse_chance, 10)
+        self.assertEqual(items[44].skip_pulse_chance, 0)                    # this piece never drops a beat
 
 
 def spans_text(line):

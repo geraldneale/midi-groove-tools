@@ -92,10 +92,13 @@ void main() {
         if (mirror_cur > 0.5) a = mix(a, color_mirror(a, mirror_angle), mirror_amount);
         if (mirror_prev > 0.5 && xfade < 1.0) b = mix(b, color_mirror(b, mirror_angle), mirror_amount);
     }
+    // the hue knob turns colors too, so a true colors layer (mirror = false) skips it as well
+    if (mirror_cur > 0.5) a = hue_rotate(a, hue);
+    if (mirror_prev > 0.5) b = hue_rotate(b, hue);
     vec3 col = mix(b, a, xfade);
     vec3 fb = texture(tex_fb, (uv - 0.5) * 0.985 + 0.5).rgb;  // trails are already mirrored
     col = mix(col, max(col, fb * 0.96), feedback);
-    col = clamp(hue_rotate(col, hue) * brightness, 0.0, 1.0);
+    col = clamp(col * brightness, 0.0, 1.0);
     frag = vec4(col, 1.0);
 }
 """
@@ -471,7 +474,10 @@ class Show:
 
         # every so often a beat lands a bigger punch with a longer release
         chance, size = int(o["big_pulse_chance"]), float(o["big_pulse_size"])
-        skip = int(o["skip_pulse_chance"])  # and now and then a kick gives no pulse at all
+        # and now and then a kick gives no pulse at all; a piece can have its own rate (fractals: 1 in 10)
+        showing = self.cur if self.cur is not None else self.fallback
+        own = getattr(getattr(showing, "item", None), "skip_pulse_chance", None)
+        skip = int(own) if own is not None else int(o["skip_pulse_chance"])
         if o["pulse_source"] == "beat":
             beats = self.state.beats(now, offset_s)
             if int(beats) != self.last_beat:
