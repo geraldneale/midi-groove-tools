@@ -64,8 +64,8 @@ def bars_for(seconds, bpm, max_bars):
 
 
 class Shuffle:
-    def __init__(self, clips_folder, db_path, art_folder=None, skip_files=(), image_bars=4,
-                 max_clip_bars=8, mode_offset=MODE_OFFSET, rng=None, seconds_of=clip_seconds,
+    def __init__(self, clips_folder, db_path, art_folder=None, skip_files=(), image_bars=16,
+                 max_clip_bars=16, mode_offset=MODE_OFFSET, rng=None, seconds_of=clip_seconds,
                  now=time.time):
         self.clips_folder, self.db_path = Path(clips_folder), Path(db_path)
         self.art_folder = Path(art_folder) if art_folder else None

@@ -231,7 +231,7 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "mirror_bars": 8, "big_pulse_chance": 32, "big_pulse_size": 3.0, "skip_pulse_chance": 20,
                   "twist_chance": 4, "generate": True}
 DEFAULT_SHUFFLE = {"enabled": True, "note": 60, "skip_note": 61, "clips": "clips", "art": "art",
-                   "image_bars": 4, "max_clip_bars": 8, "skip_fade_beats": 1.0}
+                   "image_bars": 16, "max_clip_bars": 16, "skip_fade_beats": 1.0}
 DEFAULT_CC = {"zoom": 1, "hue": 2, "kaleido": 3, "feedback": 4, "rgb_split": 5,
               "brightness": 7, "drift": 8, "shimmer": 9,
               "mirror": 10, "true_angle": 11}

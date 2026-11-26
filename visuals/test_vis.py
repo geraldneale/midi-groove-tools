@@ -515,6 +515,8 @@ class TestShuffle(unittest.TestCase):
             (d / "clips" / name).write_bytes(b"x")
         (d / "clips" / "notes.txt").write_text("not a clip")
         secs = dict(clips)
+        kw.setdefault("max_clip_bars", 8)
+        kw.setdefault("image_bars", 4)
         sh = vs.Shuffle(d / "clips", d / "shuffle.db", rng=random.Random(1),
                         seconds_of=lambda p: secs[p.name], **kw)
         self.c = lambda n: f"clips/{n}"
@@ -615,7 +617,7 @@ class TestShuffle(unittest.TestCase):
             (art / n).write_bytes(b"x")
         (art / "misc" / "parked.png").write_bytes(b"x")         # moved aside: not shown
         sh2 = vs.Shuffle(d / "clips", d / "shuffle.db", art_folder=art, skip_files=[art / "fallback.png"],
-                         rng=random.Random(4), seconds_of=lambda p: 4)
+                         image_bars=4, rng=random.Random(4), seconds_of=lambda p: 4)
         self.addCleanup(sh2.close)
         self.assertEqual(set(sh2.pool()), {"clips/a.mp4", "art/old1.png", "art/old2.jpg"})
         for n in sh2.pool():
@@ -640,6 +642,7 @@ class TestShuffle(unittest.TestCase):
             show = load_show(Path(d) / "s.toml")
         sc = show.shuffle
         self.assertEqual((sc["note"], sc["skip_note"], sc["image_bars"]), (60, 61, 2))  # bad note falls back
+        self.assertEqual(sc["max_clip_bars"], 16)                          # long enough for colors to develop
         self.assertEqual(sc["clips"], Path(d) / "clips")
         self.assertEqual(sc["art"], Path(d) / "art")
         joined = " ".join(show.warnings)
