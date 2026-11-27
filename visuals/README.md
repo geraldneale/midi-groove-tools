@@ -49,7 +49,7 @@ In MPC MIDI settings, enable clock out to the USB port the iMac sees.
     python3 fake_mpc.py --bpm 124          # terminal 1
     python3 vis_render.py show.toml        # terminal 2, with port = "FakeMPC"
 
-Keys: 1 to 9 trigger items, Space fake kick, Esc quit.
+Keys: 1 to 9 trigger items, Space fake kick, N next shuffle piece, X drop a shuffle piece for good, Esc quit. The window title shows the tempo, the MIDI port, the frame rate and the name of the file on screen (or the kind of live scene), so you can tell which picture to drop or fix.
 
 Scene length: every scene gets `--bars` bars; give a note its own length with a colon, e.g. `--notes 39 40:32 41:32 44` keeps the Mandelbrot (40) and Julia (41) up for 32 bars. At the gig, a scene lasts as long as its note on the MPC's visual track. The fake MPC stops by itself after 500 minutes (`--minutes`, 0 = until Ctrl+C), so it can't be left running for days.
 

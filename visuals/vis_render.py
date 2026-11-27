@@ -311,6 +311,15 @@ class TextLayer(Layer):
         self.tex.release()
 
 
+def showing_name(item):
+    """What the window title says is on screen: the file name, or the kind of live scene."""
+    if item is None:
+        return "black"
+    if item.path is not None:
+        return item.path.name
+    return item.kind
+
+
 class MidiConnection:
     """Finds the MPC port by name, and reconnects if the cable is pulled and replugged."""
 
@@ -404,6 +413,7 @@ class Show:
             self.fallback = FractalLayer(self, generated_item("julia"))  # no image: the Julia set
         self.gen_next = 0
         self.cur = self.prev = None
+        self.showing = "-"  # what's on screen, for the window title
         self.xfade_t0 = 0.0
         self.image_cache = {}
         self.clip_pool = ClipPool()
@@ -476,6 +486,7 @@ class Show:
         if self.prev is not None:
             self.prev.release()
         self.prev, self.cur = self.cur, layer
+        self.showing = showing_name(item)
         self.xfade_t0 = now
         self.fade_len = float(self.show.output["crossfade"]) if fade is None else fade
 
@@ -721,7 +732,7 @@ class Show:
                 song = self.song.name if self.song else "-"
                 pygame.display.set_caption(
                     f"{song} | {self.state.bpm:.1f} bpm | {'RUN' if self.state.running else 'stop'}"
-                    f" | {port} | {clock.get_fps():.0f} fps")
+                    f" | {port} | {clock.get_fps():.0f} fps | {self.showing}")
             clock.tick(fps)
 
 
