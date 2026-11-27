@@ -197,6 +197,18 @@ class TestColorMirror(unittest.TestCase):
             back = vc.okhsl_to_srgb(*vc.srgb_to_okhsl(*c))
             self.assertLess(max(abs(x - y) for x, y in zip(c, back)), 1e-4)
 
+    def test_white_stays_white(self):
+        cream, warm, red = (245 / 255, 238 / 255, 220 / 255), (240 / 255, 232 / 255, 225 / 255), (200 / 255, 40 / 255, 40 / 255)
+        for near_white in ((1.0, 1.0, 1.0), cream, warm):
+            self.assertEqual(vc.white_keep(near_white, 0.92), 1.0)   # keeps its own look
+            self.assertEqual(vc.white_keep(near_white, 0.0), 0.0)    # 0 turns it off
+        self.assertEqual(vc.white_keep(red, 0.92), 0.0)              # real colors still turn
+        self.assertEqual(vc.white_keep((0.78, 0.78, 0.78), 0.92), 0.0)
+        pink = (250 / 255, 215 / 255, 225 / 255)                     # just under: eases in, no hard edge
+        self.assertTrue(0.0 < vc.white_keep(pink, 0.92) < 1.0)
+        import vis_core
+        self.assertEqual(vis_core.DEFAULT_OUTPUT["keep_white"], 0.92)
+
     def test_mirror_like_bram(self):
         import random
         rnd = random.Random(4)

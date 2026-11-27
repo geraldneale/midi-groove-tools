@@ -54,6 +54,7 @@ uniform float mirror_amount, mirror_angle;
 uniform float mirror_cur, mirror_prev;   // 1 = this layer follows the color mirroring
 uniform float colorize_cur, colorize_prev;  // 1 = color this layer by lightness (black and white art)
 uniform float col_hue, col_span, col_sat, col_low, col_high;
+uniform float keep_white;   // near whites at or above this okhsl lightness don't turn (0 = off)
 in vec2 uv;
 out vec4 frag;
 //OKHSL
@@ -104,6 +105,10 @@ void main() {
     float s = rgb_split * 0.012;
     vec3 a = layer(tex_cur, fit_cur, p, s) * gain_cur;
     vec3 b = layer(tex_prev, fit_prev, p, s) * gain_prev;
+    // near whites in color pieces keep their own look: white paper stays white through the turning
+    float ka = colorize_cur > 0.5 ? 0.0 : white_keep(a, keep_white);
+    float kb = colorize_prev > 0.5 ? 0.0 : white_keep(b, keep_white);
+    vec3 a0 = a, b0 = b;
     if (colorize_cur > 0.5) a = colorize(a);
     if (colorize_prev > 0.5) b = colorize(b);
     if (mirror_amount > 0.0) {
@@ -113,6 +118,8 @@ void main() {
     // the hue knob turns colors too, so a true colors layer (mirror = false) skips it as well
     if (mirror_cur > 0.5) a = hue_rotate(a, hue);
     if (mirror_prev > 0.5) b = hue_rotate(b, hue);
+    a = mix(a, a0, ka);
+    b = mix(b, b0, kb);
     vec3 col = mix(b, a, xfade);
     vec3 fb = texture(tex_fb, (uv - 0.5) * 0.985 + 0.5).rgb;  // trails are already mirrored
     col = mix(col, max(col, fb * 0.96), feedback);
@@ -668,6 +675,7 @@ class Show:
         set_u(p, "col_sat", float(o["colorize_saturation"]))
         set_u(p, "col_low", float(o["colorize_low"]))
         set_u(p, "col_high", float(o["colorize_high"]))
+        set_u(p, "keep_white", float(o["keep_white"]))
         set_u(p, "mirror_angle", (travel + self.cc("true_angle")) % 1.0)
         set_u(p, "kaleido", 0.0 if k < 0.05 else 2.0 + round(k * 10))
         set_u(p, "feedback", self.cc("feedback"))

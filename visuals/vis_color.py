@@ -186,6 +186,17 @@ def mirror(rgb, angle):
     return okhsl_to_srgb((angle - h) % 1.0, s, l)
 
 
+def white_keep(rgb, threshold):
+    """How much of a color's own look to keep through the hue turning (0 to 1): near whites
+    (okhsl lightness at or above threshold) keep theirs, so white paper stays white paper
+    instead of taking the opposite tint. Eases in over the 0.05 below threshold; 0 turns it off."""
+    if threshold <= 0:
+        return 0.0
+    l = srgb_to_okhsl(*rgb)[2]
+    t = min(1.0, max(0.0, (l - (threshold - 0.05)) / 0.05))
+    return t * t * (3 - 2 * t)
+
+
 def true_hues(angle):
     """The two hues (turns) that mirror() leaves unchanged at this angle."""
     return (angle / 2) % 1.0, (angle / 2 + 0.5) % 1.0
@@ -334,6 +345,11 @@ vec3 okhsl_to_srgb(vec3 hsl) {
 }
 
 // Bram Cohen's flip_rotate: hue -> angle - hue, same saturation and lightness
+float white_keep(vec3 rgb, float threshold) {
+    if (threshold <= 0.0) return 0.0;
+    return smoothstep(threshold - 0.05, threshold, srgb_to_okhsl(clamp(rgb, 0.0, 1.0)).z);
+}
+
 vec3 color_mirror(vec3 rgb, float angle) {
     vec3 hsl = srgb_to_okhsl(clamp(rgb, 0.0, 1.0));
     if (hsl.y <= 0.0) return rgb;  // grays have no hue to mirror
