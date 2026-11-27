@@ -28,7 +28,7 @@ import rtmidi
 
 from vis_core import (FRACTAL_KINDS, GENERATED_KINDS, PALETTES, TEXT_KINDS, Item, MidiState,
                       beat_pulse, decay, dive_zoom, generated_item, julia_c,
-                      layer_matrix, load_show, one_in, pick_twist, roll_pulse)
+                      layer_matrix, load_show, one_in, pick_twist, roll_pulse, turn_in)
 from vis_color import OKHSL_GLSL
 from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, is_colorless
 from vis_shuffle import Shuffle
@@ -52,6 +52,7 @@ uniform float gain_cur, gain_prev, xfade, zoom, hue, kaleido, feedback;
 uniform float rgb_split, brightness, drift, time;
 uniform float mirror_amount, mirror_angle;
 uniform float mirror_cur, mirror_prev;   // 1 = this layer follows the color mirroring
+uniform float turn_cur, turn_prev;       // 0 = original colors (a new picture), 1 = fully turning
 uniform float colorize_cur, colorize_prev;  // 1 = color this layer by lightness (black and white art)
 uniform float col_hue, col_span, col_sat, col_low, col_high;
 uniform float keep_white;   // near whites at or above this okhsl lightness don't turn (0 = off)
@@ -112,12 +113,12 @@ void main() {
     if (colorize_cur > 0.5) a = colorize(a);
     if (colorize_prev > 0.5) b = colorize(b);
     if (mirror_amount > 0.0) {
-        if (mirror_cur > 0.5) a = mix(a, color_mirror(a, mirror_angle), mirror_amount);
-        if (mirror_prev > 0.5 && xfade < 1.0) b = mix(b, color_mirror(b, mirror_angle), mirror_amount);
+        if (mirror_cur > 0.5) a = mix(a, color_mirror(a, mirror_angle), mirror_amount * turn_cur);
+        if (mirror_prev > 0.5 && xfade < 1.0) b = mix(b, color_mirror(b, mirror_angle), mirror_amount * turn_prev);
     }
     // the hue knob turns colors too, so a true colors layer (mirror = false) skips it as well
-    if (mirror_cur > 0.5) a = hue_rotate(a, hue);
-    if (mirror_prev > 0.5) b = hue_rotate(b, hue);
+    if (mirror_cur > 0.5) a = mix(a, hue_rotate(a, hue), turn_cur);
+    if (mirror_prev > 0.5) b = mix(b, hue_rotate(b, hue), turn_prev);
     a = mix(a, a0, ka);
     b = mix(b, b0, kb);
     vec3 col = mix(b, a, xfade);
@@ -488,6 +489,8 @@ class Show:
             print(f"trigger failed for note {item.note}: {e}", file=sys.stderr)
             return
         self.decide_colorize(layer, item)
+        if type(layer) is Layer and item is not None:  # pictures and clips open in their own colors
+            layer.born = self.beat_clock
         if item is not None and item.twist:
             layer.turns, layer.mirrored = pick_twist(self.rng, int(self.show.output["twist_chance"]), item.twist)
         if self.prev is not None:
@@ -666,6 +669,10 @@ class Show:
                 self.show_pick(pick, now)
         travel = self.mirror_beats / (bars * 4.0) if bars > 0 else 0.0
         set_u(p, "mirror_amount", self.cc("mirror"))
+        hold, fade = float(o["original_bars"]), float(o["original_fade_bars"])
+        for name, layer in (("turn_cur", a), ("turn_prev", b)):
+            born = getattr(layer, "born", None)
+            set_u(p, name, turn_in(None if born is None else self.beat_clock - born, hold, fade))
         set_u(p, "mirror_cur", 1.0 if a.follows_mirror else 0.0)
         set_u(p, "mirror_prev", 1.0 if b.follows_mirror else 0.0)
         set_u(p, "colorize_cur", 1.0 if a.colorize else 0.0)

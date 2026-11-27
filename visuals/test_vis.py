@@ -14,7 +14,7 @@ from PIL import Image
 from vis_core import (CLOCK, CONTINUE, PPQN, SPP, START, STOP, MidiState,
                       beat_pulse, decay, load_show, Hit,
                       dive_zoom, julia_c, MANDELBROT_SPOTS,
-                      layer_matrix, one_in, pick_twist, TWISTS, roll_pulse)
+                      layer_matrix, one_in, pick_twist, TWISTS, roll_pulse, turn_in)
 from vis_media import ArraySource, ClipPool, ClipSource, ImageSource, cv2, is_colorless
 import vis_color as vc
 import clip_grab as cg
@@ -336,13 +336,24 @@ class TestSurprises(unittest.TestCase):
         o = vis_core.DEFAULT_OUTPUT                                         # same peaks as before, gentler normal
         self.assertEqual((o["medium_pulse_size"], o["big_pulse_size"]), (2.0, 6.0))
 
+    def test_new_pictures_open_in_their_own_colors(self):
+        self.assertEqual(turn_in(0.0, 4, 2), 0.0)          # just arrived: original colors
+        self.assertEqual(turn_in(15.9, 4, 2), 0.0)         # still original through bar 4
+        self.assertAlmostEqual(turn_in(20.0, 4, 2), 0.5)   # halfway through the ease in
+        self.assertEqual(turn_in(24.0, 4, 2), 1.0)         # fully turning after 6 bars
+        self.assertEqual(turn_in(None, 4, 2), 1.0)         # no start known: turns as before
+        self.assertEqual(turn_in(8.0, 0, 0), 1.0)          # 0 and 0: turns from the start
+        import vis_core
+        self.assertEqual((vis_core.DEFAULT_OUTPUT["original_bars"], vis_core.DEFAULT_OUTPUT["original_fade_bars"]), (4, 2))
+
     def test_pick_twist(self):
         import random
         rng = random.Random(6)
         picks = [pick_twist(rng, 4) for _ in range(8000)]
         plain = picks.count((0, False)) / len(picks)
         self.assertAlmostEqual(plain, 0.75, delta=0.02)
-        self.assertEqual(set(picks) - {(0, False)}, set(TWISTS))      # all five twists turn up
+        self.assertEqual(set(picks) - {(0, False)}, set(TWISTS))      # all three twists turn up
+        self.assertFalse(any(turns % 2 for turns, _ in picks))            # never sideways
         self.assertEqual({pick_twist(rng, 0) for _ in range(50)}, {(0, False)})
         faces = {pick_twist(rng, 2, "mirror") for _ in range(400)}       # faces: mirror only, never turned
         self.assertEqual(faces, {(0, False), (0, True)})

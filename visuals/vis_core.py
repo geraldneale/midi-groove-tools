@@ -179,7 +179,17 @@ def beat_pulse(beats, sharpness=6.0):
 
 # ---- surprises ----
 # (quarter turns, mirrored): mirror left to right, upside down mirror, upside down, turned either way
-TWISTS = ((0, True), (2, True), (2, False), (1, False), (3, False))
+TWISTS = ((0, True), (2, True), (2, False))  # mirrored, flipped top to bottom, upside down; never sideways
+
+
+def turn_in(beats_since, hold_bars, fade_bars):
+    """How far a new picture's colors may turn (0 to 1): it shows in its original colors for
+    hold_bars, then the turning eases in over fade_bars. None (no start known) turns fully."""
+    if beats_since is None:
+        return 1.0
+    t = (beats_since / 4.0 - hold_bars) / fade_bars if fade_bars > 0 else float(beats_since / 4.0 >= hold_bars)
+    t = min(1.0, max(0.0, t))
+    return t * t * (3 - 2 * t)
 
 
 def one_in(rng, n):
@@ -234,6 +244,7 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "medium_pulse_chance": 8, "medium_pulse_size": 2.0,
                   "colorize": True, "colorize_saturation": 0.8, "colorize_hue": 0.62, "colorize_span": 0.55,
                   "colorize_low": 0.15, "colorize_high": 0.85, "keep_white": 0.92,
+                  "original_bars": 4, "original_fade_bars": 2,
                   "twist_chance": 4, "generate": True}
 DEFAULT_SHUFFLE = {"enabled": True, "note": 60, "skip_note": 61, "clips": "clips", "art": "art",
                    "image_bars": 16, "max_clip_bars": 16, "skip_fade_beats": 1.0}

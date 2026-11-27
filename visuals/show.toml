@@ -22,6 +22,8 @@ fallback = "art/fallback.png"   # shown before the first scene and if MIDI goes 
 idle_seconds = 5
 crossfade = 0.25        # seconds between scenes
 mirror_bars = 8         # color mirroring: bars for the true hues to travel once round (0 = hold still)
+original_bars = 4       # a new picture shows its original colors this many bars before they start turning
+original_fade_bars = 2  # then the turning eases in over this many bars
 keep_white = 0.92       # near whites (this light or lighter) keep their own look while colors turn; 0 = off
 fit = "contain"         # contain = whole piece with black around it; cover = fill the frame, cropping
 
