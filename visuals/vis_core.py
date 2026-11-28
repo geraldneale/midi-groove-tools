@@ -244,7 +244,7 @@ DEFAULT_OUTPUT = {"width": 1920, "height": 1080, "preview_width": 1280,
                   "colorize": True, "colorize_saturation": 0.8, "colorize_hue": 0.62, "colorize_span": 0.55,
                   "colorize_low": 0.15, "colorize_high": 0.85, "keep_white": 0.92,
                   "original_bars": 4, "original_fade_bars": 2,
-                  "twist_chance": 4, "generate": True}
+                  "twist_chance": 16, "generate": True}
 DEFAULT_SHUFFLE = {"enabled": True, "note": 60, "skip_note": 61, "clips": "clips", "art": "art",
                    "image_bars": 16, "max_clip_bars": 16, "skip_fade_beats": 1.0}
 DEFAULT_CC = {"zoom": 1, "hue": 2, "kaleido": 3, "feedback": 4, "rgb_split": 5,

@@ -399,7 +399,7 @@ class TestSurprises(unittest.TestCase):
         self.assertEqual(show.songs[0].items[3].twist, "mirror")
         self.assertFalse(show.songs[0].items[4].twist)                 # unknown value: kept upright
         self.assertIn('twist must be true, false or "mirror"', " ".join(show.warnings))
-        self.assertEqual((show.output["big_pulse_chance"], show.output["twist_chance"]), (32, 4))
+        self.assertEqual((show.output["big_pulse_chance"], show.output["twist_chance"]), (32, 16))
         self.assertEqual(show.output["skip_pulse_chance"], 20)
         self.assertIsNone(show.songs[0].items[1].skip_pulse_chance)         # art follows the show
 
