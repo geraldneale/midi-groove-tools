@@ -89,7 +89,7 @@ def main():
                     hits.append(36)
                     if beat % 4 in (1, 3):
                         hits.append(38)
-                    out.send_message([cc_v, 2, (beat % 64) * 2])  # hue sweep over 16 bars
+                    out.send_message([cc_v, 2, (beat % 96) * 127 // 96])  # hue sweep over 24 bars
                     if beat == next_change:
                         if scene_note is not None:
                             out.send_message([off_v, scene_note, 0])
