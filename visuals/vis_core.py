@@ -178,8 +178,7 @@ def beat_pulse(beats, sharpness=6.0):
 
 
 # ---- surprises ----
-# (quarter turns, mirrored): mirror left to right, upside down mirror, upside down, turned either way
-TWISTS = ((0, True), (2, True), (2, False))  # mirrored, flipped top to bottom, upside down; never sideways
+TWISTS = ((0, True),)  # a left to right mirror only: upside down and sideways rarely work
 
 
 def turn_in(beats_since, hold_bars, fade_bars):

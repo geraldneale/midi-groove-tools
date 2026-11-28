@@ -352,8 +352,8 @@ class TestSurprises(unittest.TestCase):
         picks = [pick_twist(rng, 4) for _ in range(8000)]
         plain = picks.count((0, False)) / len(picks)
         self.assertAlmostEqual(plain, 0.75, delta=0.02)
-        self.assertEqual(set(picks) - {(0, False)}, set(TWISTS))      # all three twists turn up
-        self.assertFalse(any(turns % 2 for turns, _ in picks))            # never sideways
+        self.assertEqual(set(picks) - {(0, False)}, {(0, True)})      # a mirror is the only twist
+        self.assertFalse(any(turns for turns, _ in picks))                # never sideways or upside down
         self.assertEqual({pick_twist(rng, 0) for _ in range(50)}, {(0, False)})
         faces = {pick_twist(rng, 2, "mirror") for _ in range(400)}       # faces: mirror only, never turned
         self.assertEqual(faces, {(0, False), (0, True)})
@@ -374,7 +374,7 @@ class TestSurprises(unittest.TestCase):
         import numpy as np
         oa = 16 / 9
         for a in (0.6, 1.0, 2.5):
-            for turns, mirrored in ((0, False),) + TWISTS:
+            for turns, mirrored in ((0, False), (0, True), (1, False), (2, False), (2, True), (3, False)):
                 m = layer_matrix(a, oa, "contain", turns, mirrored)
                 M = np.array([[m[0], m[2]], [m[1], m[3]]])
                 inv = np.linalg.inv(M)
